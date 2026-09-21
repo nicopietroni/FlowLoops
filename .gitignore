@@ -1,0 +1,32 @@
+# Full result set — published as release assets instead (see data/README.md).
+# The local copy is kept on disk but no longer tracked.
+/data/output/
+
+# Build directories
+build/
+build*/
+cmake-build-*/
+
+# macOS
+.DS_Store
+
+# Dear ImGui runtime state
+imgui.ini
+
+# loop_weaver run artefacts.
+# These are written into the current working directory at run time; the
+# patterns are anchored to the repo root so they never mask tracked results
+# under data/ or the inputs under test_data/.
+/debug_compact.obj
+/temp.curve
+/temp.curve_types
+/temp.cycle
+/temp.normalcurve
+/temp.path
+/temp.field
+/temp.feat
+
+# run_scripts/ batch output (the scripts cd into the build dir, but catch
+# the case where they are pointed at the repo root)
+/done/
+/timeouts.txt
