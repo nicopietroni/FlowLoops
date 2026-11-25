@@ -42,6 +42,7 @@ class LoopReconstructionCondition : public Geo::PatchCondition<ScalarType> {
 
 public:
   //int curr_step=0;
+  int timeSolve = 0;
   std::vector<std::pair<int, int>> &Features;
   bool writeDebug;
   
@@ -69,6 +70,7 @@ public:
   bool single_sing_cond;
   bool smooth_paths;
   bool done_first_global_update=false;
+  int num_global_updates = 0;
   // bool save_steps;
   int MinSides;
   int MaxSides;
@@ -155,6 +157,7 @@ public:
   }
 
   bool UpdateGlobalData(const Geo::PatchManaging<ScalarType> &PatchM) override {
+    auto start = std::chrono::high_resolution_clock::now();
     // return true;
     // curr_step++;
     // std::vector<Geo::Point3<ScalarType>> PatchPos;
@@ -173,6 +176,7 @@ public:
 
     if (writeDebug)
       std::cout << "UPDATING GLOBAL DATA" << std::endl;
+    num_global_updates++;
 
     bool InSolvable = true;
     for (size_t i = 0; i < PatchM.NumPatches(); i++) {
@@ -188,8 +192,15 @@ public:
 
     // if (save_steps)
     //   SaveDecompMesh(PatchM);
-    if (!InSolvable)
+    if (!InSolvable) {
+      if (CurveSolv.progress_level >= 2)
+        std::cout << "[LoopRecon] global update #" << num_global_updates
+                  << ": some patch not solvable, skipped" << std::endl;
       return false;
+    }
+    if (CurveSolv.progress_level >= 1)
+      std::cout << "[LoopRecon] global update #" << num_global_updates
+                << std::endl;
 
     // std::cout<<"Here 2"<<std::endl;
     // exit(0);
@@ -267,6 +278,8 @@ public:
       }
     }
     
+    auto end = std::chrono::high_resolution_clock::now();
+    timeSolve += std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
     return true;
   }
 
@@ -284,9 +297,16 @@ public:
     }
   }
 
-  virtual bool NeedSaveStatus()const override {
-    return true;
-  }
+  // When true the decomposer saves the status (SaveStatus) before each
+  // removal test and restores it (RestoreStatus) on rollback, instead of
+  // calling UpdateGlobalData again on the restored layout, i.e. no second
+  // global surfacing per rejected removal.
+  bool save_restore_status = true;
+
+  // virtual bool NeedSaveStatus()const override {
+  //   return true;
+  // }
+  virtual bool NeedSaveStatus() const override { return save_restore_status; }
 
   bool IsCorrect(const Geo::PatchManaging<ScalarType> &PatchM,
                  const int &IndexPatch) const override {
@@ -371,7 +391,10 @@ public:
       assert(numFaces > 0);
       ScalarType out_ratio =
           ScalarType(out_of_bound_faces0) / ScalarType(numFaces);
-      if (out_ratio >= (1-MaxNormErrPercent))
+      // if (out_ratio >= (1-MaxNormErrPercent))
+      // same threshold as the reconstructed side below: at most
+      // MaxNormErrPercent of the faces may exceed MaxNormErr
+      if (out_ratio >= MaxNormErrPercent)
         return false;
 
       int out_of_bound_faces1 = 0;
