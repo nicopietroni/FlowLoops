@@ -638,7 +638,10 @@ public:
         Geo::Segment3<ScalarType> Seg(Pos0, Pos1);
         Geo::Point3<ScalarType> ClosTest = Geo::ClosestPoint(Seg, Pos);
         ScalarType testD = (ClosTest - Pos).Norm();
-        if (testD > MinD) {
+        // FIX: was "testD > MinD" with MinD initialized to max, never true,
+        // so Clos was returned uninitialized for feature vertices
+        // if (testD > MinD) {
+        if (testD < MinD) {
           Clos = ClosTest;
           MinD = testD;
         }

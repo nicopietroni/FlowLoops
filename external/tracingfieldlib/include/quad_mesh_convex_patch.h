@@ -60,17 +60,31 @@ template <class ScalarType> class ConvexPatchFinder {
   // using clock_t = std::chrono::steady_clock;
   // using ns = std::chrono::nanoseconds;
 
+  // OLD (one seed vertex)
+  // void ExpandingSideScore(..., const int CentralV, ...)
   void ExpandingSideScore(const std::vector<Geo::Point3<ScalarType>> &PatchPos,
                          const std::vector<std::vector<int>> &PatchFaces,
                          const std::vector<std::vector<Pos3>> &Side,
                          const int CentralV,
+                         std::vector<std::pair<ScalarType, int>> &SideDist) {
+    ExpandingSideScore(PatchPos, PatchFaces, Side, std::vector<int>(1, CentralV),
+                       SideDist);
+  }
+
+  // NEW (distance from the seed): the distance of each side from a set of
+  // vertices (e.g. all the vertices of the seed faces)
+  void ExpandingSideScore(const std::vector<Geo::Point3<ScalarType>> &PatchPos,
+                         const std::vector<std::vector<int>> &PatchFaces,
+                         const std::vector<std::vector<Pos3>> &Side,
+                         const std::vector<int> &SeedV,
                          std::vector<std::pair<ScalarType, int>> &SideDist) {
 
     std::vector<std::vector<int>> VVAdj;
     Geo::FindVertexStar(PatchFaces, PatchPos.size(), VVAdj);
     Geo::TMark TempMark;
     typename Geodesic<ScalarType>::GeodesicParam GParam;
-    GParam.Seeds.push_back(CentralV);
+    // OLD: GParam.Seeds.push_back(CentralV);
+    GParam.Seeds = SeedV;
     GParam.unitary_dist = true;
     Geodesic<ScalarType>::NodeDijkstra(PatchPos, VVAdj, TempMark, GParam);
 
@@ -247,6 +261,17 @@ template <class ScalarType> class ConvexPatchFinder {
   }
 
 public:
+  // NEW (distance from the seed): the expansion order and MaxExpandSteps use
+  // the distance of the sides from all the vertices of the seed faces (a
+  // long seed, e.g. the quads under a line, grows by the same amount all
+  // around it); false = from the central vertex of the seed (the old way)
+  bool dist_from_seed = false;
+  // NEW (reach convex): when MaxExpandSteps is reached the expansion goes on
+  // until the patch is convex (a concave seed, e.g. an S shaped line, may
+  // not be convex yet: otherwise the result is the last convex state met,
+  // possibly none); false = stop there (the old way)
+  bool reach_convex = false;
+
   void FindConvexPatchFrom(const std::vector<int> &SeedF,
                            std::vector<int> &FaceIdx,
                            const int MaxExpandSteps = -1,
@@ -261,6 +286,11 @@ public:
     assert(SeedIndexV < QuadVertPos.size());
     bool has_expanded = false;
     int curr_step = 0;
+    // NEW (distance from the seed): the vertices of the seed faces
+    std::set<int> SeedVSet;
+    for (size_t i = 0; i < SeedF.size(); i++)
+      for (size_t j = 0; j < QuadFaces[SeedF[i]].size(); j++)
+        SeedVSet.insert(QuadFaces[SeedF[i]][j]);
     do {
 
       if (debug_msg)
@@ -273,9 +303,12 @@ public:
       CopySubMesh(QuadVertPos, QuadFaces, CurrFIdx, PatchVertPos, PatchFaces,
                   OriginalVert, OriginalFaces);
 
+      // NEW (reach convex): remember if this state is convex
+      bool is_convex = false;
       if (!QuadPatchFunctions<ScalarType>::HasConcaveAngle(PatchVertPos,
                                                            PatchFaces)) {
         FaceIdx = CurrFIdx;
+        is_convex = true;
         // BestPatchOriginalVert = OriginalVert;
       }
 
@@ -305,7 +338,17 @@ public:
 
       // get the score of expansion
       std::vector<std::pair<ScalarType, int>> SideDist;
-      ExpandingSideScore(PatchVertPos, PatchFaces, Sides, CentralV, SideDist);
+      // OLD: ExpandingSideScore(PatchVertPos, PatchFaces, Sides, CentralV,
+      //                         SideDist);
+      // NEW (distance from the seed)
+      if (dist_from_seed) {
+        std::vector<int> SeedV;
+        for (size_t i = 0; i < OriginalVert.size(); i++)
+          if (SeedVSet.count(OriginalVert[i]) > 0)
+            SeedV.push_back((int)i);
+        ExpandingSideScore(PatchVertPos, PatchFaces, Sides, SeedV, SideDist);
+      } else
+        ExpandingSideScore(PatchVertPos, PatchFaces, Sides, CentralV, SideDist);
 
       // then expand the one that can
       has_expanded = false;
@@ -316,7 +359,11 @@ public:
           continue;
 
         // already expanded to the limit
-        if ((MaxExpandSteps != -1) && (CurrDist >= MaxExpandSteps))
+        // OLD: if ((MaxExpandSteps != -1) && (CurrDist >= MaxExpandSteps))
+        //        return;
+        // NEW (reach convex): with reach_convex, only once it is convex
+        if ((MaxExpandSteps != -1) && (CurrDist >= MaxExpandSteps) &&
+            ((!reach_convex) || is_convex))
           return;
 
         Expand(CurrFIdx, OriginalSides[IndexSide]);

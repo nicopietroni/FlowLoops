@@ -39,6 +39,7 @@
 #include <cstddef>
 #include <iostream>
 #include <iterator>
+#include <map>
 #include <set>
 // #include <sys/_types/_size_t.h>
 #include <cstddef> // C++
@@ -48,6 +49,37 @@
 
 namespace Geo {
 template <class ScalarType> class RefineForTracing {
+  // removes from the edges to split the ones on the mesh border (one face
+  // only), with their positions: with keep_border_edges the border is never
+  // refined (e.g. a region whose border vertices must stay the given ones)
+  static void
+  RemoveBorderEdges(const std::vector<std::vector<int>> &Faces,
+                    std::vector<std::pair<int, int>> &To_splitE,
+                    std::vector<Geo::Point3<ScalarType>> *To_splitPos) {
+    std::map<std::pair<int, int>, int> EdgeCount;
+    for (size_t i = 0; i < Faces.size(); i++)
+      for (size_t j = 0; j < Faces[i].size(); j++) {
+        int IndexV0 = Faces[i][j];
+        int IndexV1 = Faces[i][(j + 1) % Faces[i].size()];
+        EdgeCount[std::pair<int, int>(std::min(IndexV0, IndexV1),
+                                      std::max(IndexV0, IndexV1))]++;
+      }
+    std::vector<std::pair<int, int>> KeptE;
+    std::vector<Geo::Point3<ScalarType>> KeptPos;
+    for (size_t i = 0; i < To_splitE.size(); i++) {
+      std::pair<int, int> Key(std::min(To_splitE[i].first, To_splitE[i].second),
+                              std::max(To_splitE[i].first, To_splitE[i].second));
+      if (EdgeCount[Key] == 1)
+        continue;
+      KeptE.push_back(To_splitE[i]);
+      if (To_splitPos != NULL)
+        KeptPos.push_back((*To_splitPos)[i]);
+    }
+    To_splitE = KeptE;
+    if (To_splitPos != NULL)
+      (*To_splitPos) = KeptPos;
+  }
+
 public:
   // static bool
   // SpliToHaveOneBorderPerTris(std::vector<Geo::Point3<ScalarType>> &Pos3D,
@@ -738,7 +770,8 @@ public:
   static void
   SpliTwoFeatureTris(std::vector<Geo::Point3<ScalarType>> &Pos3D,
                      std::vector<std::vector<int>> &Faces,
-                     const std::vector<std::pair<int, int>> &FeatureE) {
+                     const std::vector<std::pair<int, int>> &FeatureE,
+                     bool keep_border_edges = false) {
 
     std::set<std::pair<int, int>> FeatureESet(FeatureE.begin(), FeatureE.end());
     std::vector<std::pair<int, int>> ToSplitE;
@@ -763,6 +796,8 @@ public:
         ToSplitE.push_back(KeyE1);
       }
     // std::cout << "To split: " << ToSplitE.size() << std::endl;
+    if (keep_border_edges)
+      RemoveBorderEdges(Faces, ToSplitE, NULL);
     std::vector<ScalarType> Alpha(ToSplitE.size(), 0.5);
     RefineMesh<ScalarType>::SplitTriangleFaces(Pos3D, Faces, ToSplitE, Alpha);
   }
@@ -822,7 +857,8 @@ public:
                                std::vector<std::pair<int, int>> &FeatureE,
                                const std::vector<int> &OriginVert,
                                std::vector<int> &OldF,
-                               ScalarType max_angle = 45) {
+                               ScalarType max_angle = 45,
+                               bool keep_border_edges = false) {
     std::vector<std::vector<int>> VF, VFIndex;
     Geo::getVFAdjacency(Faces, VF, VFIndex);
     std::vector<std::pair<int, int>> To_splitE;
@@ -852,6 +888,8 @@ public:
         To_splitPos.push_back(PMid);
       }
     }
+    if (keep_border_edges)
+      RemoveBorderEdges(Faces, To_splitE, &To_splitPos);
     RefineMesh<ScalarType>::SplitTriangleFaces(Pos3D, Faces, To_splitE,
                                                To_splitPos, FeatureE, OldF);
   }
@@ -862,7 +900,8 @@ public:
                             std::vector<std::vector<int>> &Faces,
                             std::vector<std::pair<int, int>> &FeatureE,
                             bool splitAllFedge = true,
-                            bool final_smooth_new_v = false) {
+                            bool final_smooth_new_v = false,
+                            bool keep_border_edges = false) {
     std::vector<ScalarType> Angles;
     Angles.push_back(135);
     Angles.push_back(225);
@@ -947,6 +986,9 @@ public:
     }
 
     assert(AllSplitE.size() == AllSplitPos.size());
+    // (the border edges are left whole: their faces are split on the others)
+    if (keep_border_edges)
+      RemoveBorderEdges(Faces, AllSplitE, &AllSplitPos);
     // update the features
     std::map<std::pair<int, int>, Geo::Point3<ScalarType>> AllSplitMap;
     for (size_t i = 0; i < AllSplitE.size(); i++) {
@@ -1004,7 +1046,7 @@ public:
     FeatureE.erase(last, FeatureE.end());
 
     // last round of possible split
-    SpliTwoFeatureTris(Pos3D, Faces, FeatureE);
+    SpliTwoFeatureTris(Pos3D, Faces, FeatureE, keep_border_edges);
     SplitTrianglesAllFeatures(Pos3D, Faces, FeatureE);
 
     RemoveDuplicatedVert(Pos3D, Faces);
@@ -1029,14 +1071,16 @@ public:
                       std::vector<std::vector<int>> &Faces,
                       std::vector<Field::CrossF<ScalarType>> &FaceCurv,
                       std::vector<std::pair<int, int>> &FeatureE,
-                      ScalarType max_angle = 45, bool print_info = false) {
+                      ScalarType max_angle = 45, bool print_info = false,
+                      bool keep_border_edges = false) {
 
     std::vector<int> DisconnVert;
     std::vector<Geo::Point3<ScalarType>> DisconnDir;
     FindNonConnectedVert(Pos3D, Faces, FaceCurv, FeatureE, DisconnVert,
                          DisconnDir, max_angle);
     std::vector<int> OldF;
-    RefineWideAngles(Pos3D, Faces, FeatureE, DisconnVert, OldF, max_angle);
+    RefineWideAngles(Pos3D, Faces, FeatureE, DisconnVert, OldF, max_angle,
+                     keep_border_edges);
     assert(OldF.size() == Faces.size());
 
     // then upcate the cross field
@@ -1059,6 +1103,42 @@ public:
     std::sort(FeatureE.begin(), FeatureE.end());
     auto last = std::unique(FeatureE.begin(), FeatureE.end());
     FeatureE.erase(last, FeatureE.end());
+  }
+
+  void AddControlFeatures(const std::vector<Geo::Point3<ScalarType>> &Pos3D,
+                          const std::vector<std::vector<int>> &Faces,
+                          const std::vector<std::pair<int, int>> &FeatureE,
+                          const ScalarType &DistanceThr,
+                          std::vector<std::pair<int, int>> &AddedFeatureE)
+  {
+    //sample uniform the features
+
+    //split the mesh along the features
+    
+    //then extract the submesh of the features for each point
+
+    //then find closest feature point not connected along the submesh of features
+
+    //then check notmals
+
+    //finally find and store paths between pairs
+
+    //report this paths on the original mesh
+
+    // //sample regularly along the features
+    // SampleBordersRegularly(const std::vector<std::vector<int>> &Faces,
+    //                                  const std::vector<std::vector<int>> &NextF,
+    //                                  const std::vector<std::vector<int>> &NextE,
+    //                                  const int StepSize,
+    //                                  const int MinSamplePerBorder,
+    //                                  std::vector<int> &Selected,
+    //                                  const std::vector<int> *SampleFrom = NULL)
+
+    // ExtractEdgeMeshFromSurfaceMesh(
+    //   const std::vector<Geo::Point3<ScalarType>> &VertPos,
+    //   const std::vector<std::vector<int>> &Faces,
+    //   std::vector<Geo::Point3<ScalarType>> &EdgeMeshVertPos,
+    //   std::vector<std::vector<int>> &ConnectivityEdges)
   }
 };
 } // namespace Geo

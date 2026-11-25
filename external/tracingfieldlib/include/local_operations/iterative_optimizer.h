@@ -257,10 +257,22 @@ template <class ScalarType> class IterativeOptimizer {
   ScalarType abs_target_l;
   ScalarType MaxQError;
   std::set<std::pair<Geo::Point3<ScalarType>, Geo::Point3<ScalarType>>>  KeepEdgeSet;
+  // FIX: multiplier applied to the per-vertex adaptive size (see AdaptiveLen)
+  ScalarType adaptive_scale;
+  // MAX FACES: stop when the mesh has more faces (0 = no bound)
+  int max_faces;
+  bool exceeded_faces;
+  // SAFETY: the pass was stopped because it did not converge
+  bool exceeded_steps;
 
   typename Geo::ImproveAspectRatioPriority<ScalarType>::AspectRatioType AType =
       Geo::ImproveAspectRatioPriority<ScalarType>::RadiusRatio;
 
+  // FIX: in adaptive mode the per-vertex size replaced the target length
+  // entirely, dropping the /1.5 (collapse) and *1.5 (refine) factors. Both
+  // passes then used the same threshold, so collapse and split undid each
+  // other at every iteration (never converging, slow, poor quality).
+  // The operation-specific factor is now kept through adaptive_scale.
   ScalarType AdaptiveLen(const Pos3 &pos, ScalarType &TargetL) {
     int IndexV0 = pos.V;
     int IndexV1 = pos.VFlip(Faces);
@@ -273,7 +285,8 @@ template <class ScalarType> class IterativeOptimizer {
     assert(IndexV1 < (*VertSize).size());
     ScalarType SizeL0 = (*VertSize)[IndexV0];
     ScalarType SizeL1 = (*VertSize)[IndexV1];
-    return ((SizeL0 + SizeL1) / (ScalarType)2);
+    // return ((SizeL0 + SizeL1) / (ScalarType)2);
+    return (adaptive_scale * (SizeL0 + SizeL1) / (ScalarType)2);
   }
 
   void AddOperation(
@@ -560,6 +573,12 @@ template <class ScalarType> class IterativeOptimizer {
           IPrio->UpdateEnergies(Vert, Faces, abs_target_l, new_faces);
 
         performed_steps++;
+        // SAFETY: a healthy pass performs at most a couple of operations
+        // per face; far more means operations undoing each other (e.g.
+        // valence flips whose expected valence changes with the flips
+        // themselves): stop the pass instead of looping forever
+        if ((size_t)performed_steps > 10 * Faces.size() + 1000)
+          exceeded_steps = true;
         TMark++;
         has_performed = true;
 
@@ -584,6 +603,9 @@ template <class ScalarType> class IterativeOptimizer {
         UpdateMarks(involved_new_faces);
         if (update_stack)
           UpdateHeapFaces(involved_new_faces);
+        // MAX FACES: stop the pass when the bound is exceeded
+        if ((max_faces > 0) && ((int)Faces.size() > max_faces))
+          exceeded_faces = true;
       }
 
       // erase current operation
@@ -594,7 +616,22 @@ template <class ScalarType> class IterativeOptimizer {
           printf("Heap Size %d \n", (int)HeapOperations.size());
         }
 
-    } while (!HeapOperations.empty()); //&&(last_priority>=min_gain));
+    // } while (!HeapOperations.empty()); //&&(last_priority>=min_gain));
+    // } while ((!HeapOperations.empty()) && (!exceeded_faces)); // MAX FACES
+    } while ((!HeapOperations.empty()) && (!exceeded_faces) &&
+             (!exceeded_steps)); // MAX FACES, SAFETY
+
+    // MAX FACES: drop the operations left when stopped early
+    if (exceeded_steps)
+      std::cout << "Warning: optimization pass stopped after "
+                << performed_steps << " operations (not converging)"
+                << std::endl;
+    // if (exceeded_faces) {
+    if (exceeded_faces || exceeded_steps) {
+      for (size_t i = 0; i < HeapOperations.size(); i++)
+        delete (HeapOperations[i].LOP);
+      HeapOperations.clear();
+    }
 
     assert(HeapOperations.empty());
     if (writeMSG) {
@@ -710,11 +747,18 @@ public:
     ScalarType MaxQError;
     ScalarType MaxNormFlipVariation;
     bool adaptive;
+    // FIX: ratio between this pass target length and the base TargetL,
+    // applied also to the adaptive per-vertex size
+    ScalarType adaptive_scale;
+    // MAX FACES: stop when the mesh has more faces (0 = no bound)
+    int max_faces;
     std::set<std::pair<Geo::Point3<ScalarType>, Geo::Point3<ScalarType> >> KeepEdges;
 
     // std::vector<Quadric<ScalarType> > *VertQ;
 
     OptParam() {
+      adaptive_scale = 1;
+      max_faces = 0; // MAX FACES
       target_l = 1;
       addSmooth = true;
       addFlip = true;
@@ -749,6 +793,10 @@ public:
     writeMSG = OParam.writeMSG;
     MaxNormFlipVariation = OParam.MaxNormFlipVariation;
     adaptive = OParam.adaptive;
+    adaptive_scale = OParam.adaptive_scale; // FIX
+    max_faces = OParam.max_faces;           // MAX FACES
+    exceeded_faces = false;
+    exceeded_steps = false; // SAFETY
     KeepEdgeSet= OParam.KeepEdges;
     //InitKeepEdges(OParam);
     InitGlobalOpt(OParam.target_l, OParam.min_gain, OParam.min_acceptable,
@@ -822,6 +870,19 @@ public:
     feature_angle = OParam.feature_angle;
     writeMSG = OParam.writeMSG;
     MaxNormFlipVariation = OParam.MaxNormFlipVariation;
+    // FIX: min_gain and min_acceptable were never read from OParam here
+    // (GlobalOptimize gets them through InitGlobalOpt), so with -ite every
+    // pass used the constructor values (0.01 and 0) instead of its own
+    min_gain = OParam.min_gain;
+    min_acceptable = OParam.min_acceptable;
+    // FIX: adaptive was never read from OParam in the iterative path, so
+    // "-ite -adapt" ignored the size field and VertSize was not compacted
+    // after collapses (misaligned with the mesh vertices)
+    adaptive = OParam.adaptive;
+    adaptive_scale = OParam.adaptive_scale;
+    max_faces = OParam.max_faces; // MAX FACES
+    exceeded_faces = false;
+    exceeded_steps = false; // SAFETY
 
     /// initialize the rest of structures
     DeletedV.clear();
@@ -859,6 +920,11 @@ public:
     // Shuffle randomly
     std::shuffle(FaceEdPair.begin(), FaceEdPair.end(), g);
     for (size_t i = 0; i < FaceEdPair.size(); i++) {
+      // MAX FACES: stop the pass when the bound is exceeded
+      if ((max_faces > 0) && ((int)Faces.size() > max_faces)) {
+        exceeded_faces = true;
+        break;
+      }
       int currF = FaceEdPair[i].first;
       int currE = FaceEdPair[i].second;
       for (size_t opT = 0; opT < OpTodo.size(); opT++) {
@@ -880,16 +946,23 @@ public:
             NextF, NextE, VertQ, CurrTargetL, MaxNormFlipVariation, VertSizePTR,
             IsFaceEFeature, IsVertCorner,FixBoundary, &KeepEdgeSet);
 
+        // FIX (speed): QuickReject only needs pos and positions, run it
+        // before the expensive precomputation (as AddOperation already does)
+        if (!(*IPrio).QuickReject(CurrLop, CurrTargetL, min_acceptable)) {
+          delete (CurrLop);
+          continue;
+        }
+
         CurrLop->feature_angle = feature_angle;
         CurrLop->max_error = OParam.MaxQError;
         CurrLop->PrecomputeConnectivity();
         CurrLop->UpdateFeatureReprojectInfo();
         CurrLop->PrecomputeGeometry();
 
-        if (!(*IPrio).QuickReject(CurrLop, CurrTargetL, min_acceptable)) {
-          delete (CurrLop);
-          continue;
-        }
+        // if (!(*IPrio).QuickReject(CurrLop, CurrTargetL, min_acceptable)) {
+        //   delete (CurrLop);
+        //   continue;
+        // }
         if (!CurrLop->Feasible()) {
           delete (CurrLop);
           continue;
@@ -959,6 +1032,10 @@ public:
     MaxQError = 0;
     MaxNormFlipVariation = 5;
     adaptive = false;
+    adaptive_scale = 1; // FIX
+    max_faces = 0;      // MAX FACES
+    exceeded_faces = false;
+    exceeded_steps = false; // SAFETY
     VertSize = _VertSize;
     IsFaceEFeature = _IsFaceEFeature;
     IsVertCorner = _IsVertCorner;
@@ -1012,9 +1089,11 @@ int CollapseSmallEdges(
   Oparam.MaxQError = TRemP.max_error;
   Oparam.MaxNormFlipVariation = 5;
   Oparam.adaptive = TRemP.adaptive;
+  // FIX: keep the /1.5 factor also on the adaptive size field
+  Oparam.adaptive_scale = Oparam.target_l / TRemP.TargetL;
   Oparam.writeMSG = TRemP.writeMSG;
   Oparam.KeepEdges = TRemP.PreserveEdges;
-  
+
   int steps = 0;
   if (!TRemP.iterative) {
 
@@ -1052,6 +1131,10 @@ int RefineBigEdges(
   Oparam.MaxNormFlipVariation = 5;
   Oparam.writeMSG = TRemP.writeMSG;
   Oparam.adaptive = TRemP.adaptive;
+  // FIX: keep the *1.5 factor also on the adaptive size field
+  Oparam.adaptive_scale = Oparam.target_l / TRemP.TargetL;
+  // MAX FACES: refinement is the only operation adding faces
+  Oparam.max_faces = TRemP.max_faces;
   Oparam.KeepEdges = TRemP.PreserveEdges;
 
   // Oparam.writeMSG=false;
@@ -1204,11 +1287,20 @@ void ReprojectStep(std::vector<Geo::Point3<ScalarType>> &VertPos,
                    ScalarType damp = 0.5) {
   ScalarType maxDist = TriGrid.bbox.Diag();
 
-  std::set<int> FixedVertSet(FixedVert.begin(), FixedVert.end());
+  // FIX (speed): a std::set lookup per vertex replaced by a flag vector
+  // std::set<int> FixedVertSet(FixedVert.begin(), FixedVert.end());
+  std::vector<bool> IsFixedV(VertPos.size(), false);
+  for (size_t i = 0; i < FixedVert.size(); i++) {
+    assert(FixedVert[i] >= 0);
+    assert(FixedVert[i] < (int)VertPos.size());
+    IsFixedV[FixedVert[i]] = true;
+  }
 
   for (size_t i = 0; i < VertPos.size(); i++) {
 
-    if (FixedVertSet.find(i) != FixedVertSet.end())
+    // if (FixedVertSet.find(i) != FixedVertSet.end())
+    //   continue;
+    if (IsFixedV[i])
       continue;
 
     Geo::Point3<ScalarType> Pos = VertPos[i];

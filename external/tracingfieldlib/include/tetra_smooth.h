@@ -102,7 +102,11 @@ void SmoothLaplacianTetMesh(std::vector<Geo::Point3<ScalarType>> &TetraVertPos,
   }
 
   // fix all the boundary
-  std::set<int> FixedTetraV;
+  // std::set<int> FixedTetraV;
+  // (also the given fixed vertices: before only the surface smoothing used
+  // FixedV, the internal one moved them, e.g. the old vertices and the ones
+  // on the concave planes after a refinement)
+  std::set<int> FixedTetraV = FixedV;
   for (size_t i = 0; i < VertMap.size(); i++) {
     if (VertMap[i] == -1)
       continue;
@@ -122,10 +126,13 @@ void SmoothLaplacianTetMesh(std::vector<Geo::Point3<ScalarType>> &TetraVertPos,
   // typename Geo::Local_Param_Smooth<ScalarType>::UVSmoothParam UVP;
   // UVP.Fixed=FixedVSurf;
   // UVP.FeatureLines=LineSmoothSurf;
+  std::vector<std::vector<int>> LapNeighbors;
+  GetLaplacianNeighbours<ScalarType>(SurfVertPos, ExtFace, LapNeighbors,LineSmoothSurf);
+  
   for (size_t s = 0; s < NumIte; s++) {
     // Geo::Local_Param_Smooth<ScalarType>::Smooth(SurfVertPos,ExtFace,UVP);
     // smooth
-    SmoothLaplacianStep(SurfVertPos, ExtFace, FixedVSurf, LineSmoothSurf);
+    SmoothLaplacianStep(SurfVertPos, ExtFace, FixedVSurf, LapNeighbors);
 
     // reproject
     for (size_t i = 0; i < SurfVertPos.size(); i++) {
@@ -152,8 +159,11 @@ void SmoothLaplacianTetMesh(std::vector<Geo::Point3<ScalarType>> &TetraVertPos,
         continue;
       TetraVertPos[i] = SurfVertPos[VertMap[i]];
     }
+
     // then smooth the rest
-    SmoothLaplacianStep(TetraVertPos, Tetra, FixedTetraV);
+    std::vector<std::vector<int>> LapNeighbors;
+    GetLaplacianNeighbours(TetraVertPos, Tetra, LapNeighbors);
+    SmoothLaplacianStep(TetraVertPos, Tetra, FixedTetraV,LapNeighbors);
   }
 }
 

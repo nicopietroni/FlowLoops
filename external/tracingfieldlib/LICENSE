@@ -1,23 +1,44 @@
-Non-Commercial License Agreement
-Copyright (c) 2025, Nico Pietroni
+Non-Commercial Software License
 
-1. Permission is hereby granted to use, copy, modify, and distribute
-   this software for academic research, teaching, and personal
-   non-commercial purposes, provided that this copyright notice is
-   included in all copies or substantial portions of the software.
+Copyright (c) 2025 Nico Pietroni
 
-2. Commercial use of this software, including but not limited to use in
-   commercial products, services, tools, or consulting, is strictly
-   prohibited without prior written permission from the copyright holder.
+1. Permitted Use
 
-3. This software is provided "as is", without warranty of any kind,
-   express or implied, including but not limited to the warranties of
-   merchantability, fitness for a particular purpose, and
-   noninfringement. In no event shall the authors or copyright holders
-   be liable for any claim, damages, or other liability, arising from,
-   out of, or in connection with the software or the use or other
-   dealings in the software.
+Permission is hereby granted to use, copy, modify, and distribute this
+software and its associated documentation for non-commercial academic
+research, teaching, and personal purposes, subject to the terms of this
+license.
 
-4. For commercial licensing, please contact:
-   Nico Pietroni
-   Email: nico.pietroni@gmail.com
+2. Redistribution
+
+All copies, substantial portions, and modified versions of the software
+must retain the copyright notice and the full text of this license.
+Redistribution does not grant any additional rights or remove the
+restrictions on commercial use.
+
+3. Commercial Use
+
+Commercial use is prohibited without prior written permission from the
+copyright holder. Commercial use includes, but is not limited to, use
+for commercial research and development, integration into commercial
+or proprietary products, provision of commercial services (including
+hosted services), and paid consulting activities.
+
+Separate commercial licenses may be obtained by contacting the
+copyright holder. All rights not expressly granted under this license
+are reserved.
+
+4. Disclaimer of Warranty and Limitation of Liability
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+5. Commercial Licensing and Contact
+
+Nico Pietroni
+Email: nico.pietroni@gmail.com

@@ -38,6 +38,8 @@
 #include <cassert>
 #include <cstddef>
 #include <iostream>
+#include <limits>
+#include <set>
 #include <utility>
 #include <vector>
 
@@ -153,6 +155,9 @@ template <class ScalarType> class GraphLabelSheetSampler {
           continue;
         if (InternalFacesGraphM3.NodeType(IndexNode) == Geo::TangentDomain)
           continue;
+        // only nodes allowed as seeds (e.g. manifold at all their vertices)
+        if (!IsAllowedSeed(IndexNode))
+          continue;
 
         ScalarType CurrW = InternalFacesGraphM3.NodeW[IndexNode];
         if (CurrW > BestW)
@@ -245,6 +250,9 @@ template <class ScalarType> class GraphLabelSheetSampler {
     // std::vector<Geo::Point3<ScalarType> > FaceNormals;
     // Geo::ComputeFaceNormals(VertPos,InternalFaces,FaceNormals);
 
+    // debug: how many vertices have 0, 1, 2, 3 directions with an allowed
+    // node
+    int NumDirHist[4] = {0, 0, 0, 0};
     // int InternalNum=0;
     for (size_t i = 0; i < VertPos.size(); i++) {
       // //in this case is border
@@ -255,6 +263,7 @@ template <class ScalarType> class GraphLabelSheetSampler {
       std::vector<int> CurrBestM3Nodes;
       GetBestNodesM3(VF[i], VertFrameField[i], InternalFFrameField,
                      InternalFacesGraphM3, CurrBestM3Nodes);
+      NumDirHist[std::min((int)CurrBestM3Nodes.size(), 3)]++;
 
       if ((FilterComplete) && (CurrBestM3Nodes.size() < 3))
         continue;
@@ -272,11 +281,34 @@ template <class ScalarType> class GraphLabelSheetSampler {
 
     std::cout << "Filtered " << Filtered.size() << " out of " << VertPos.size()
               << std::endl;
+    std::cout << "Vertices with 0/1/2/3 directions with an allowed node: "
+              << NumDirHist[0] << " / " << NumDirHist[1] << " / "
+              << NumDirHist[2] << " / " << NumDirHist[3] << std::endl;
   }
 
 public:
   // std::vector<int> ChosenNodesM6;
   std::vector<int> ChosenNodesM3;
+
+  // Nodes that can be chosen as seeds (empty = all the enabled, non tangent
+  // nodes). Set it from the connectivity check so that the seeds fall only
+  // on nodes that are manifold at all their vertices: a seed on a non
+  // manifold node can never be part of a valid sheet.
+  std::vector<bool> AllowedSeeds;
+
+  void SetAllowedSeeds(const std::vector<bool> &_AllowedSeeds) {
+    AllowedSeeds = _AllowedSeeds;
+  }
+
+  void ClearAllowedSeeds() { AllowedSeeds.clear(); }
+
+  bool IsAllowedSeed(const int IndexN) const {
+    if (AllowedSeeds.empty())
+      return true;
+    assert(IndexN >= 0);
+    assert(IndexN < (int)AllowedSeeds.size());
+    return AllowedSeeds[IndexN];
+  }
 
   GraphLabelSheetSampler(
       const std::vector<std::vector<int>> &_PolyConnectivity,
@@ -361,9 +393,38 @@ public:
 
     std::vector<int> ChosenNodesM3;
 
+    // no vertex with a complete set of allowed nodes
+    // if (Filtered.empty()) {
+    //   std::cout << "WARNING: no vertex with 3 allowed seed nodes" << std::endl;
+    //   return ChosenNodesM3;
+    // }
+    // fallback: vertices with at least one allowed node (e.g. a thin domain
+    // where almost every vertex is close to a singular line, there the
+    // nodes tangent to the line are disabled and no vertex keeps all the
+    // three directions). Each node is still a valid seed for one sheet.
+    if (Filtered.empty()) {
+      std::cout << "WARNING: no vertex with 3 allowed seed nodes, using the "
+                   "vertices with at least one"
+                << std::endl;
+      GetCompleteSamplesM3(VertPos, InternalFaces, VertFrameField,
+                           InternalFFrameField, InternalFacesGraphM3, Filtered,
+                           BestNodes, false);
+    }
+    if (Filtered.empty()) {
+      std::cout << "WARNING: no allowed seed node at all" << std::endl;
+      return ChosenNodesM3;
+    }
+
     Geo::PointSpatialIndex<ScalarType> PIndex;
     PIndex.Init(Filtered);
 
+    // two samples can snap to the same vertex: skip the repeated nodes
+    // (keeping the order); also two nodes of the same face (different
+    // directions) can never be both part of the solution (one sheet per
+    // face): only the first one is kept
+    std::set<int> AlreadyChosen;
+    std::set<int> UsedFaces;
+    int SkippedSameFace = 0;
     for (size_t i = 0; i < ToSnapV.size(); i++) {
       Geo::Point3<ScalarType> SelPos = VertPos[ToSnapV[i]];
       int closestP_idx;
@@ -371,9 +432,23 @@ public:
       assert(closestP_idx >= 0);
       assert(closestP_idx < BestNodes.size());
 
-      ChosenNodesM3.insert(ChosenNodesM3.end(), BestNodes[closestP_idx].begin(),
-                           BestNodes[closestP_idx].end());
+      // ChosenNodesM3.insert(ChosenNodesM3.end(), BestNodes[closestP_idx].begin(),
+      //                      BestNodes[closestP_idx].end());
+      for (size_t j = 0; j < BestNodes[closestP_idx].size(); j++) {
+        int CurrN = BestNodes[closestP_idx][j];
+        if (!AlreadyChosen.insert(CurrN).second)
+          continue;
+        int CurrF = Field::FrameFieldM3Graph::ElemOfNode(CurrN);
+        if (!UsedFaces.insert(CurrF).second) {
+          SkippedSameFace++;
+          continue;
+        }
+        ChosenNodesM3.push_back(CurrN);
+      }
     }
+    if (SkippedSameFace > 0)
+      std::cout << "WARNING: " << SkippedSameFace
+                << " seeds skipped (same face of another seed)" << std::endl;
     return ChosenNodesM3;
   }
 
@@ -462,6 +537,15 @@ public:
   }
 
   void SampleInitialPointsM3Farthest(int NumSamples) {
+
+    if (!AllowedSeeds.empty()) {
+      int NumAllowed = 0;
+      for (size_t i = 0; i < AllowedSeeds.size(); i++)
+        if (AllowedSeeds[i])
+          NumAllowed++;
+      std::cout << "Sampling seeds among " << NumAllowed
+                << " allowed (manifold) nodes" << std::endl;
+    }
 
     std::vector<int> SelectedV;
     std::vector<int> Boundary;

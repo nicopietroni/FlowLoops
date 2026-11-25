@@ -60,25 +60,95 @@ public:
 
 };
 
+// template <class ScalarType>
+// void BarycentricCoords(const Traingle2<ScalarType> &T,
+//                        const Geo::Point2<ScalarType> &Test_pos,
+//                        ScalarType &alpha,ScalarType &beta,ScalarType &gamma)
+// {
+//     ScalarType x1=T.P(0).X;
+//     ScalarType x2=T.P(1).X;
+//     ScalarType x3=T.P(2).X;
+
+//     ScalarType y1=T.P(0).Y;
+//     ScalarType y2=T.P(1).Y;
+//     ScalarType y3=T.P(2).Y;
+
+//     ScalarType x=Test_pos.X;
+//     ScalarType y=Test_pos.Y;
+
+//     alpha=((y2-y3)*(x-x3)+(x3-x2)*(y-y3))/((y2-y3)*(x1-x3)+(x3-x2)*(y1-y3));
+//     beta=((y3-y1)*(x-x3)+(x1-x3)*(y-y3))/((y3-y1)*(x2-x3)+(x1-x3)*(y2-y3));
+//     gamma=1-alpha-beta;
+// }
+
 template <class ScalarType>
-void BarycentricCoords(const Traingle2<ScalarType> &T,
-                       const Geo::Point2<ScalarType> &Test_pos,
-                       ScalarType &alpha,ScalarType &beta,ScalarType &gamma)
+bool BarycentricCoords(const Traingle2<ScalarType> &T,
+                       const Geo::Point2<ScalarType> &P,
+                       ScalarType &alpha, ScalarType &beta, ScalarType &gamma,
+                       ScalarType relEps = ScalarType(1e-12))
 {
-    ScalarType x1=T.P(0).X;
-    ScalarType x2=T.P(1).X;
-    ScalarType x3=T.P(2).X;
+    const Geo::Point2<ScalarType> &A = T.P(0);
+    const Geo::Point2<ScalarType> &B = T.P(1);
+    const Geo::Point2<ScalarType> &C = T.P(2);
 
-    ScalarType y1=T.P(0).Y;
-    ScalarType y2=T.P(1).Y;
-    ScalarType y3=T.P(2).Y;
+    // Edge vectors (differences rather than absolute coordinates
+    // to reduce cancellation for triangles far from the origin)
+    const ScalarType e0x = B.X - A.X, e0y = B.Y - A.Y;   // AB
+    const ScalarType e1x = C.X - B.X, e1y = C.Y - B.Y;   // BC
+    const ScalarType e2x = A.X - C.X, e2y = A.Y - C.Y;   // CA
 
-    ScalarType x=Test_pos.X;
-    ScalarType y=Test_pos.Y;
+    // Squared edge lengths
+    const ScalarType l0 = e0x*e0x + e0y*e0y;
+    const ScalarType l1 = e1x*e1x + e1y*e1y;
+    const ScalarType l2 = e2x*e2x + e2y*e2y;
+    const ScalarType maxL = std::max(l0, std::max(l1, l2));
 
-    alpha=((y2-y3)*(x-x3)+(x3-x2)*(y-y3))/((y2-y3)*(x1-x3)+(x3-x2)*(y1-y3));
-    beta=((y3-y1)*(x-x3)+(x1-x3)*(y-y3))/((y3-y1)*(x2-x3)+(x1-x3)*(y2-y3));
-    gamma=1-alpha-beta;
+    // Twice the signed area (single shared denominator)
+    const ScalarType area2 = e0x * (C.Y - A.Y) - e0y * (C.X - A.X);
+
+    // ---- Regular case ----
+    // |area2| scales like length^2, so comparing against maxL makes the
+    // test scale-invariant (it is essentially a test on sin(angle))
+    if (std::abs(area2) > relEps * maxL)
+    {
+        const ScalarType inv = ScalarType(1) / area2;
+        const ScalarType px = P.X - C.X, py = P.Y - C.Y;
+        alpha = ((B.Y - C.Y) * px + (C.X - B.X) * py) * inv;
+        beta  = ((C.Y - A.Y) * px + (A.X - C.X) * py) * inv;
+        gamma = ScalarType(1) - alpha - beta;
+        return true;
+    }
+
+    // ---- Degenerate to a point ----
+    // All vertices coincide: any convex combination is valid, pick the centroid
+    if (maxL <= std::numeric_limits<ScalarType>::min())   // or use your own absolute threshold
+    {
+        alpha = beta = gamma = ScalarType(1) / ScalarType(3);
+        return false;
+    }
+
+    // ---- Degenerate to a segment: project onto the longest edge ----
+    // With collinear vertices, the longest edge always contains the third vertex,
+    // so it spans the whole degenerate triangle
+    const Geo::Point2<ScalarType> *S0, *S1;
+    ScalarType *w0, *w1, *w2;
+    if (maxL == l0)      { S0 = &A; S1 = &B; w0 = &alpha; w1 = &beta;  w2 = &gamma; }
+    else if (maxL == l1) { S0 = &B; S1 = &C; w0 = &beta;  w1 = &gamma; w2 = &alpha; }
+    else                 { S0 = &C; S1 = &A; w0 = &gamma; w1 = &alpha; w2 = &beta;  }
+
+    // Parameter of the orthogonal projection of P onto the segment,
+    // clamped to [0,1] to keep the weights convex
+    // (remove the clamp if you need extrapolation along the line)
+    const ScalarType dx = S1->X - S0->X, dy = S1->Y - S0->Y;
+    ScalarType t = ((P.X - S0->X) * dx + (P.Y - S0->Y) * dy) / maxL;
+    t = std::min(ScalarType(1), std::max(ScalarType(0), t));
+
+    *w0 = ScalarType(1) - t;
+    *w1 = t;
+    *w2 = ScalarType(0);   // coordinates are not unique here; zero is a valid choice
+
+    // Note: the weights reconstruct the projection of P, not P itself
+    return false;
 }
 
 template <class ScalarType>

@@ -566,7 +566,8 @@ InterpolateFrame(const Field::FrameField<ScalarType> &ReFFrame,
     RetFrame.D[2] += D2 * W[i]; // Frames[i].Q;
 
     RetFrame.Q += Frames[i].Q * W[i];
-    RetFrame.Pos = Frames[i].Pos * W[i]; //* Frames[i].Q;
+    // RetFrame.Pos = Frames[i].Pos * W[i]; //* Frames[i].Q;
+    RetFrame.Pos += Frames[i].Pos * W[i]; // was overwritten, not accumulated
     // TotQ += Frames[i].Q;
     TotW += W[i];
   }
@@ -718,81 +719,161 @@ Geo::Point3<ScalarType> BestFlip(const Geo::Point3<ScalarType> &DTest,
 //   return coherent;
 // }
 
-// orthonormalize a set of constraints
+// // orthonormalize a set of constraints
+// template <class ScalarType>
+// bool MakeConstraintsCoherentForFrame(
+//     std::vector<Geo::Point3<ScalarType>> &Constraints) {
+//   ScalarType eps = 0.1;
+//   ScalarType IntAvg = 30;
+//
+//   if (Constraints.size() == 1)
+//     return true;
+//
+//   std::vector<Geo::Point3<ScalarType>> SelectedConstraint;
+//   // add the first one
+//   SelectedConstraint.push_back(Constraints[0]);
+//
+//   // bool coherent = true;
+//
+//   std::vector<Geo::Point3<ScalarType>> To_Aggregate;
+//
+//   // find the first set of coherent
+//   for (size_t i = 0; i < SelectedConstraint.size(); i++) {
+//
+//     Geo::Point3<ScalarType> D0 = Constraints[i];
+//     // first check if already exist a feasible direction
+//     for (size_t j = 0; j < SelectedConstraint.size(); j++) {
+//       Geo::Point3<ScalarType> D1 = SelectedConstraint[j];
+//       D1 = BestFlip(D1, D0);
+//
+//       ScalarType Angle = AngleDeg(D0, D1);
+//
+//       // same direction
+//       if (fabs(Angle) < eps)
+//         break;
+//
+//       // orthogonal
+//       if (fabs(Angle - 90) < eps) {
+//         SelectedConstraint.push_back(D1);
+//         break;
+//       }
+//       // otherwise add the ones to be aggregate
+//       To_Aggregate.push_back(D1);
+//     }
+//   }
+//
+//   assert(SelectedConstraint.size() < 3);
+//   std::vector<int> AvgIdx;
+//   for (size_t i = 0; i < To_Aggregate.size(); i++) {
+//     ScalarType BestAngle = 90;
+//     int BestIDx = -1;
+//     Geo::Point3<ScalarType> DistTest = To_Aggregate[i];
+//     // then average to the closest one
+//     for (size_t j = 0; j < SelectedConstraint.size(); j++) {
+//       // get the minimal angle
+//       Geo::Point3<ScalarType> DTarg = SelectedConstraint[j];
+//
+//       DTarg = BestFlip(DistTest, DTarg);
+//       ScalarType Angle = AngleDeg(DistTest, DTarg);
+//
+//       // then sum up
+//       if (fabs(Angle) < BestAngle) {
+//         BestAngle = fabs(Angle);
+//         BestIDx = j;
+//       }
+//     }
+//     assert(BestIDx != -1);
+//     AvgIdx.push_back(BestIDx);
+//   }
+//
+//   // then average
+//   assert(AvgIdx.size() == To_Aggregate.size());
+//   for (size_t i = 0; i < To_Aggregate.size(); i++) {
+//     int Index = AvgIdx[i];
+//     assert(Index >= 0);
+//     assert(Index < SelectedConstraint.size());
+//     SelectedConstraint[Index] +=
+//         BestFlip(To_Aggregate[i], SelectedConstraint[Index]);
+//   }
+//
+//   assert(SelectedConstraint.size() <= 3);
+//   // normalize
+//   for (size_t i = 0; i < SelectedConstraint.size(); i++)
+//     SelectedConstraint[i].Normalize();
+//
+//   // if two make force them orthogonal
+//   if (SelectedConstraint.size() == 2) {
+//     ScalarType dotVal = Dot(SelectedConstraint[0], SelectedConstraint[1]);
+//     SelectedConstraint[1] =
+//         SelectedConstraint[1] - SelectedConstraint[0] * dotVal;
+//   }
+//   if (SelectedConstraint.size() == 3)
+//     Field::OrthoNormalizeFrome<ScalarType>(
+//         SelectedConstraint[0], SelectedConstraint[1], SelectedConstraint[2]);
+//   Constraints = SelectedConstraint;
+//   return (To_Aggregate.size() == 0);
+// }
+
+// The previous version above looped on SelectedConstraint instead of
+// Constraints, so it always returned only the first constraint (all the
+// others were silently discarded). It also pushed the already selected
+// direction instead of the new one, and did not normalize after the
+// Gram-Schmidt step in the two-directions case.
+//
+// Reduce a set of directional constraints to at most 3 orthonormal ones:
+// - a direction (up to sign) equal to a selected one is merged
+// - a direction orthogonal to all the selected ones becomes a new axis
+// - otherwise it is non coherent: it becomes a new axis if far (> 45 deg)
+//   from all the selected ones, or it is averaged to the closest one
+// returns true if all the constraints were coherent
 template <class ScalarType>
 bool MakeConstraintsCoherentForFrame(
     std::vector<Geo::Point3<ScalarType>> &Constraints) {
-  ScalarType eps = 0.1;
-  ScalarType IntAvg = 30;
+  const ScalarType eps = 0.1; // degrees
 
-  if (Constraints.size() == 1)
+  if (Constraints.size() <= 1)
     return true;
 
   std::vector<Geo::Point3<ScalarType>> SelectedConstraint;
-  // add the first one
   SelectedConstraint.push_back(Constraints[0]);
 
-  // bool coherent = true;
+  bool coherent = true;
+  for (size_t i = 1; i < Constraints.size(); i++) {
+    Geo::Point3<ScalarType> DTest = Constraints[i];
 
-  std::vector<Geo::Point3<ScalarType>> To_Aggregate;
-
-  // find the first set of coherent
-  for (size_t i = 0; i < SelectedConstraint.size(); i++) {
-
-    Geo::Point3<ScalarType> D0 = Constraints[i];
-    // first check if already exist a feasible direction
-    for (size_t j = 0; j < SelectedConstraint.size(); j++) {
-      Geo::Point3<ScalarType> D1 = SelectedConstraint[j];
-      D1 = BestFlip(D1, D0);
-
-      ScalarType Angle = AngleDeg(D0, D1);
-
-      // same direction
-      if (fabs(Angle) < eps)
-        break;
-
-      // orthogonal
-      if (fabs(Angle - 90) < eps) {
-        SelectedConstraint.push_back(D1);
-        break;
-      }
-      // otherwise add the ones to be aggregate
-      To_Aggregate.push_back(D1);
-    }
-  }
-
-  assert(SelectedConstraint.size() < 3);
-  std::vector<int> AvgIdx;
-  for (size_t i = 0; i < To_Aggregate.size(); i++) {
+    // find the closest selected direction and check orthogonality to all
     ScalarType BestAngle = 90;
-    int BestIDx = -1;
-    Geo::Point3<ScalarType> DistTest = To_Aggregate[i];
-    // then average to the closest one
+    int BestIdx = -1;
+    bool ortho_all = true;
     for (size_t j = 0; j < SelectedConstraint.size(); j++) {
-      // get the minimal angle
-      Geo::Point3<ScalarType> DTarg = SelectedConstraint[j];
-
-      DTarg = BestFlip(DistTest, DTarg);
-      ScalarType Angle = AngleDeg(DistTest, DTarg);
-
-      // then sum up
-      if (fabs(Angle) < BestAngle) {
-        BestAngle = fabs(Angle);
-        BestIDx = j;
+      Geo::Point3<ScalarType> DFlip = BestFlip(DTest, SelectedConstraint[j]);
+      ScalarType Angle = AngleDeg(DFlip, SelectedConstraint[j]);
+      if (fabs(Angle - 90) >= eps)
+        ortho_all = false;
+      if (Angle <= BestAngle) {
+        BestAngle = Angle;
+        BestIdx = j;
       }
     }
-    assert(BestIDx != -1);
-    AvgIdx.push_back(BestIDx);
-  }
+    assert(BestIdx != -1);
 
-  // then average
-  assert(AvgIdx.size() == To_Aggregate.size());
-  for (size_t i = 0; i < To_Aggregate.size(); i++) {
-    int Index = AvgIdx[i];
-    assert(Index >= 0);
-    assert(Index < SelectedConstraint.size());
-    SelectedConstraint[Index] +=
-        BestFlip(To_Aggregate[i], SelectedConstraint[Index]);
+    // same direction
+    if (BestAngle < eps)
+      continue;
+
+    // orthogonal to all, new axis
+    if (ortho_all && (SelectedConstraint.size() < 3)) {
+      SelectedConstraint.push_back(DTest);
+      continue;
+    }
+
+    // non coherent
+    coherent = false;
+    if ((BestAngle > 45) && (SelectedConstraint.size() < 3))
+      SelectedConstraint.push_back(DTest);
+    else
+      SelectedConstraint[BestIdx] +=
+          BestFlip(DTest, SelectedConstraint[BestIdx]);
   }
 
   assert(SelectedConstraint.size() <= 3);
@@ -805,12 +886,13 @@ bool MakeConstraintsCoherentForFrame(
     ScalarType dotVal = Dot(SelectedConstraint[0], SelectedConstraint[1]);
     SelectedConstraint[1] =
         SelectedConstraint[1] - SelectedConstraint[0] * dotVal;
+    SelectedConstraint[1].Normalize();
   }
   if (SelectedConstraint.size() == 3)
     Field::OrthoNormalizeFrome<ScalarType>(
         SelectedConstraint[0], SelectedConstraint[1], SelectedConstraint[2]);
   Constraints = SelectedConstraint;
-  return (To_Aggregate.size() == 0);
+  return coherent;
 }
 
 // set the constraints considering multiple boundaries and sharp features

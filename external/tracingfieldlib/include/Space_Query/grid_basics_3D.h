@@ -43,7 +43,7 @@ void BestDim(const int n_elems,
              Geo::Point3<int> & dim )
 {
     const int mincells   = 1;   // NUMBER OF CELLS
-    const double GFactor = 1;	// GridEntry = NumElem*GFactor
+    const double GFactor = 4;	// GridEntry = NumElem*GFactor
     double diag = size3D.Norm();// Diagonal OF THE BOUNDING BOX
     double eps  = diag*1e-4;	// TOLERANCE
 

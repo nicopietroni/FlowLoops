@@ -40,7 +40,9 @@
 #include "polyline3.h"
 #include "segment3.h"
 #include <cmath>
+#include <functional>
 #include <limits>
+#include <thread>
 
 namespace Geo {
 template <class ScalarType>
@@ -72,9 +74,9 @@ ScalarType BestAlignedPoly(const std::vector<Geo::Point3<ScalarType>> &FacePos,
 }
 
 template <class ScalarType>
-ScalarType BestAlignedPolyProcrustes(const std::vector<Geo::Point3<ScalarType>> &FacePos,
-                           std::vector<Geo::Point3<ScalarType>> &bestPoly)
-{
+ScalarType
+BestAlignedPolyProcrustes(const std::vector<Geo::Point3<ScalarType>> &FacePos,
+                          std::vector<Geo::Point3<ScalarType>> &bestPoly) {
   const int n = (int)FacePos.size();
   if (n < 3) {
     bestPoly = FacePos;
@@ -126,13 +128,12 @@ ScalarType BestAlignedPolyProcrustes(const std::vector<Geo::Point3<ScalarType>> 
   for (int i = 0; i < n; ++i) {
     Geo::Point3<ScalarType> qi = FacePos[i] - cQ;
     Geo::Point3<ScalarType> pi = bestPoly[i] - cP;
-    numerator   += Dot(qi, pi);   // dot product
+    numerator += Dot(qi, pi); // dot product
     denominator += Dot(pi, pi);
   }
 
-  ScalarType s = (denominator > ScalarType(0))
-                   ? (numerator / denominator)
-                   : ScalarType(1);
+  ScalarType s =
+      (denominator > ScalarType(0)) ? (numerator / denominator) : ScalarType(1);
 
   // ------------------------------------------------------------
   // 4) Apply scaling around the centroid of the aligned template
@@ -157,23 +158,382 @@ ScalarType BestAlignedPolyProcrustes(const std::vector<Geo::Point3<ScalarType>> 
   return Err;
 }
 
+// template <class ScalarType>
+// void SmoothPolyScale(std::vector<std::vector<Geo::Point3<ScalarType>>>
+// &TargetPoly,
+//                      std::vector<ScalarType> &Weights,
+//                      const std::vector<std::vector<int>> &Adj,
+//                      const int Steps)
+// {
+//   assert(TargetPoly.size() == Weights.size());
+//   assert(TargetPoly.size() == Adj.size());
+
+//   if (Steps <= 0) return;
+//   if (TargetPoly.empty()) return;
+
+//   auto PolyBarycenter = [](const std::vector<Geo::Point3<ScalarType>> &Poly)
+//   -> Geo::Point3<ScalarType>
+//   {
+//     Geo::Point3<ScalarType> Bary(0, 0, 0);
+//     if (Poly.empty()) return Bary;
+
+//     for (const auto &p : Poly)
+//       Bary += p;
+
+//     Bary /= ScalarType(Poly.size());
+//     return Bary;
+//   };
+
+//   auto PolyMeanEdge = [](const std::vector<Geo::Point3<ScalarType>> &Poly) ->
+//   ScalarType
+//   {
+//     if (Poly.size() < 2) return 0;
+
+//     ScalarType Sum = 0;
+//     for (size_t i = 0; i < Poly.size(); ++i)
+//     {
+//       const auto &p0 = Poly[i];
+//       const auto &p1 = Poly[(i + 1) % Poly.size()];
+//       Sum += (p1 - p0).Norm();
+//     }
+//     return Sum / ScalarType(Poly.size());
+//   };
+
+//   for (int step = 0; step < Steps; ++step)
+//   {
+//     std::vector<ScalarType> OldScale(TargetPoly.size(), 0);
+//     for (size_t i = 0; i < TargetPoly.size(); ++i)
+//       OldScale[i] = PolyMeanEdge(TargetPoly[i]);
+
+//     std::vector<ScalarType> NewScale = OldScale;
+
+//     for (size_t i = 0; i < TargetPoly.size(); ++i)
+//     {
+//       ScalarType SumW = 0;
+//       ScalarType SumS = 0;
+
+//       for (size_t j = 0; j < Adj[i].size(); ++j)
+//       {
+//         int idx = Adj[i][j];
+//         if (idx < 0 || idx >= (int)TargetPoly.size()) continue;
+//         if (Weights[idx] <= 0) continue;
+
+//         SumW += Weights[idx];
+//         SumS += Weights[idx] * OldScale[idx];
+//       }
+
+//       if (SumW > 0)
+//         NewScale[i] = SumS / SumW;
+//     }
+
+//     for (size_t i = 0; i < TargetPoly.size(); ++i)
+//     {
+//       if (TargetPoly[i].empty()) continue;
+//       if (OldScale[i] <= 0) continue;
+
+//       ScalarType ScaleFactor = NewScale[i] / OldScale[i];
+//       Geo::Point3<ScalarType> Bary = PolyBarycenter(TargetPoly[i]);
+
+//       for (size_t k = 0; k < TargetPoly[i].size(); ++k)
+//         TargetPoly[i][k] = Bary + (TargetPoly[i][k] - Bary) * ScaleFactor;
+//     }
+//   }
+// }
+
+// template <class ScalarType>
+// void SmoothPolyOrientation(
+//     std::vector<std::vector<Geo::Point3<ScalarType>>> &TargetPoly,
+//     std::vector<ScalarType> &Weights,
+//     const std::vector<std::vector<int>> &FFAdj, const int Steps,
+//     const ScalarType Lambda = ScalarType(0.5)) {
+//   assert(TargetPoly.size() == Weights.size());
+//   assert(TargetPoly.size() == FFAdj.size());
+
+//   if (Steps <= 0)
+//     return;
+//   if (TargetPoly.empty())
+//     return;
+
+//   const ScalarType RadToDeg = ScalarType(180.0) / ScalarType(M_PI);
+
+//   auto PolyBarycenter = [](const std::vector<Geo::Point3<ScalarType>> &Poly)
+//       -> Geo::Point3<ScalarType> {
+//     Geo::Point3<ScalarType> Bary(0, 0, 0);
+//     if (Poly.empty())
+//       return Bary;
+//     for (const auto &p : Poly)
+//       Bary += p;
+//     Bary /= ScalarType(Poly.size());
+//     return Bary;
+//   };
+
+//   for (int step = 0; step < Steps; ++step) {
+//     size_t N = TargetPoly.size();
+
+//     std::vector<Geo::Point3<ScalarType>> Bary(N), Normal(N), TangentRef(N);
+//     std::vector<int> Valence(N, 0);
+
+//     for (size_t i = 0; i < N; ++i) {
+//       if (TargetPoly[i].size() < 3)
+//         continue;
+
+//       Bary[i] = PolyBarycenter(TargetPoly[i]);
+//       Valence[i] = (int)TargetPoly[i].size();
+
+//       std::vector<int> FaceIdx(Valence[i]);
+//       for (int k = 0; k < Valence[i]; ++k)
+//         FaceIdx[k] = k;
+//       std::vector<std::vector<int>> Faces{FaceIdx};
+
+//       Normal[i] = Geo::Normal(TargetPoly[i], Faces, 0);
+
+//       Geo::Point3<ScalarType> Dir = TargetPoly[i][0] - Bary[i];
+//       Dir -= Normal[i] * Dot(Dir, Normal[i]); // project onto tangent plane
+//       Dir.Normalize();
+//       TangentRef[i] = Dir;
+//     }
+
+//     std::vector<ScalarType> DeltaAngle(N, 0);
+
+//     for (size_t i = 0; i < N; ++i) {
+//       if (TargetPoly[i].size() < 3)
+//         continue;
+//       if (Valence[i] <= 0)
+//         continue;
+
+//       ScalarType SumW = 0;
+//       ScalarType SumCos = 0, SumSin = 0;
+//       ScalarType Nval = ScalarType(Valence[i]);
+
+//       for (size_t j = 0; j < FFAdj[i].size(); ++j) {
+//         int idx = FFAdj[i][j];
+//         if (idx < 0 || idx >= (int)N)
+//           continue;
+//         if (Weights[idx] <= 0)
+//           continue;
+//         if (TargetPoly[idx].size() < 3)
+//           continue;
+
+//         // align neighbor's normal onto i's normal (minimal rotation)
+//         Geo::Point3<ScalarType> Axis = Cross(Normal[idx], Normal[i]);
+//         ScalarType SinA = Axis.Norm();
+//         ScalarType CosA = Dot(Normal[idx], Normal[i]);
+//         Geo::Point3<ScalarType> TangJ = TangentRef[idx];
+
+//         if (SinA > ScalarType(1e-8)) {
+//           Axis /= SinA;
+//           ScalarType RotAngleRad = std::atan2(SinA, CosA);
+//           TangJ = Geo::RotateVector(TangJ, Axis, RotAngleRad * RadToDeg);
+//         }
+
+//         // angle from TangentRef[i] to transported TangJ, around Normal[i]
+//         ScalarType CosT = Dot(TangentRef[i], TangJ);
+//         ScalarType SinT = Dot(Cross(TangentRef[i], TangJ), Normal[i]);
+//         ScalarType Theta = std::atan2(SinT, CosT);
+
+//         // N-RoSy representation to remove symmetry ambiguity
+//         SumCos += Weights[idx] * std::cos(Nval * Theta);
+//         SumSin += Weights[idx] * std::sin(Nval * Theta);
+//         SumW += Weights[idx];
+//       }
+
+//       if (SumW > 0) {
+//         ScalarType AvgTheta = std::atan2(SumSin, SumCos) / Nval;
+//         DeltaAngle[i] = Lambda * AvgTheta;
+//       }
+//     }
+
+//     for (size_t i = 0; i < N; ++i) {
+//       if (TargetPoly[i].size() < 3)
+//         continue;
+//       if (DeltaAngle[i] == 0)
+//         continue;
+
+//       for (size_t k = 0; k < TargetPoly[i].size(); ++k) {
+//         Geo::Point3<ScalarType> V = TargetPoly[i][k] - Bary[i];
+//         V = Geo::RotateVector(V, Normal[i], DeltaAngle[i] * RadToDeg);
+//         TargetPoly[i][k] = Bary[i] + V;
+//       }
+//     }
+//   }
+// }
 
 template <class ScalarType>
-void SmoothPolyScale(std::vector<std::vector<Geo::Point3<ScalarType>>> &TargetPoly,
-                     std::vector<ScalarType> &Weights,
-                     const std::vector<std::vector<int>> &Adj,
-                     const int Steps)
-{
+void SmoothPolyOrientation(
+    std::vector<std::vector<Geo::Point3<ScalarType>>> &TargetPoly,
+    std::vector<ScalarType> &Weights,
+    const std::vector<std::vector<int>> &FFAdj, const int Steps,
+    const ScalarType Lambda = ScalarType(0.5)) {
+  assert(TargetPoly.size() == Weights.size());
+  assert(TargetPoly.size() == FFAdj.size());
+
+  if (Steps <= 0)
+    return;
+  if (TargetPoly.empty())
+    return;
+
+  const ScalarType RadToDeg = ScalarType(180.0) / ScalarType(M_PI);
+  const size_t N = TargetPoly.size();
+
+  auto PolyBarycenter = [](const std::vector<Geo::Point3<ScalarType>> &Poly)
+      -> Geo::Point3<ScalarType> {
+    Geo::Point3<ScalarType> Bary(0, 0, 0);
+    if (Poly.empty())
+      return Bary;
+    for (const auto &p : Poly)
+      Bary += p;
+    Bary /= ScalarType(Poly.size());
+    return Bary;
+  };
+
+  // ---- precompute once: per-polygon face-index wrapper used by Geo::Normal.
+  // The topology (valence) never changes across steps, only the vertex
+  // positions do, so this is built a single time instead of Steps*N times.
+  std::vector<std::vector<std::vector<int>>> FacesCache(N);
+  for (size_t i = 0; i < N; ++i) {
+    if (TargetPoly[i].size() < 3)
+      continue;
+    std::vector<int> FaceIdx(TargetPoly[i].size());
+    for (size_t k = 0; k < FaceIdx.size(); ++k)
+      FaceIdx[k] = (int)k;
+    FacesCache[i] = std::vector<std::vector<int>>{std::move(FaceIdx)};
+  }
+
+  // ---- persistent buffers, allocated once and overwritten every step
+  // instead of being reconstructed (and reallocated) on every iteration.
+  std::vector<Geo::Point3<ScalarType>> Bary(N), Normal(N), TangentRef(N);
+  std::vector<int> Valence(N, 0);
+  std::vector<ScalarType> DeltaAngle(N, 0);
+
+  for (int step = 0; step < Steps; ++step) {
+
+    for (size_t i = 0; i < N; ++i) {
+      if (TargetPoly[i].size() < 3)
+        continue;
+
+      Bary[i] = PolyBarycenter(TargetPoly[i]);
+      Valence[i] = (int)TargetPoly[i].size();
+
+      Normal[i] = Geo::Normal(TargetPoly[i], FacesCache[i], 0);
+
+      Geo::Point3<ScalarType> Dir = TargetPoly[i][0] - Bary[i];
+      Dir -= Normal[i] * Dot(Dir, Normal[i]); // project onto tangent plane
+      Dir.Normalize();
+      TangentRef[i] = Dir;
+    }
+
+    std::fill(DeltaAngle.begin(), DeltaAngle.end(), ScalarType(0));
+
+    for (size_t i = 0; i < N; ++i) {
+      if (TargetPoly[i].size() < 3)
+        continue;
+      if (Valence[i] <= 0)
+        continue;
+
+      ScalarType SumW = 0;
+      ScalarType SumCos = 0, SumSin = 0;
+      ScalarType Nval = ScalarType(Valence[i]);
+
+      for (size_t j = 0; j < FFAdj[i].size(); ++j) {
+        int idx = FFAdj[i][j];
+        if (idx < 0 || idx >= (int)N)
+          continue;
+        if (Weights[idx] <= 0)
+          continue;
+        if (TargetPoly[idx].size() < 3)
+          continue;
+
+        // align neighbor's normal onto i's normal (minimal rotation)
+        Geo::Point3<ScalarType> Axis = Cross(Normal[idx], Normal[i]);
+        ScalarType SinA = Axis.Norm();
+        ScalarType CosA = Dot(Normal[idx], Normal[i]);
+        Geo::Point3<ScalarType> TangJ = TangentRef[idx];
+
+        if (SinA > ScalarType(1e-8)) {
+          Axis /= SinA;
+          ScalarType RotAngleRad = std::atan2(SinA, CosA);
+          TangJ = Geo::RotateVector(TangJ, Axis, RotAngleRad * RadToDeg);
+        }
+
+        // angle from TangentRef[i] to transported TangJ, around Normal[i]
+        ScalarType CosT = Dot(TangentRef[i], TangJ);
+        ScalarType SinT = Dot(Cross(TangentRef[i], TangJ), Normal[i]);
+        ScalarType Theta = std::atan2(SinT, CosT);
+
+        // N-RoSy representation to remove symmetry ambiguity
+        SumCos += Weights[idx] * std::cos(Nval * Theta);
+        SumSin += Weights[idx] * std::sin(Nval * Theta);
+        SumW += Weights[idx];
+      }
+
+      if (SumW > 0) {
+        ScalarType AvgTheta = std::atan2(SumSin, SumCos) / Nval;
+        DeltaAngle[i] = Lambda * AvgTheta;
+      }
+    }
+
+    for (size_t i = 0; i < N; ++i) {
+      if (TargetPoly[i].size() < 3)
+        continue;
+      if (DeltaAngle[i] == 0)
+        continue;
+
+      for (size_t k = 0; k < TargetPoly[i].size(); ++k) {
+        Geo::Point3<ScalarType> V = TargetPoly[i][k] - Bary[i];
+        V = Geo::RotateVector(V, Normal[i], DeltaAngle[i] * RadToDeg);
+        TargetPoly[i][k] = Bary[i] + V;
+      }
+    }
+  }
+}
+
+// NEW (parallel): Fn(i) for i in [0,N) on several threads (static blocks;
+// for loops whose iterations write only their own element)
+inline void ParallelFor(size_t N, const std::function<void(size_t)> &Fn,
+                        size_t MinPerThread = 1000) {
+  unsigned int NumT = std::thread::hardware_concurrency();
+  if (NumT == 0)
+    NumT = 1;
+  NumT = (unsigned int)std::min<size_t>(
+      NumT, std::max<size_t>(1, N / std::max<size_t>(1, MinPerThread)));
+  if (NumT <= 1) {
+    for (size_t i = 0; i < N; i++)
+      Fn(i);
+    return;
+  }
+  std::vector<std::thread> Th;
+  size_t Block = (N + NumT - 1) / NumT;
+  for (unsigned int t = 0; t < NumT; t++) {
+    size_t B = t * Block, E = std::min(N, B + Block);
+    if (B >= E)
+      break;
+    Th.emplace_back([&Fn, B, E]() {
+      for (size_t i = B; i < E; i++)
+        Fn(i);
+    });
+  }
+  for (auto &T : Th)
+    T.join();
+}
+
+template <class ScalarType>
+void SmoothPolyScale(
+    std::vector<std::vector<Geo::Point3<ScalarType>>> &TargetPoly,
+    std::vector<ScalarType> &Weights, const std::vector<std::vector<int>> &Adj,
+    const int Steps, const ScalarType Lambda = ScalarType(0.5)) {
   assert(TargetPoly.size() == Weights.size());
   assert(TargetPoly.size() == Adj.size());
 
-  if (Steps <= 0) return;
-  if (TargetPoly.empty()) return;
+  if (Steps <= 0)
+    return;
+  if (TargetPoly.empty())
+    return;
 
-  auto PolyBarycenter = [](const std::vector<Geo::Point3<ScalarType>> &Poly) -> Geo::Point3<ScalarType>
-  {
+  auto PolyBarycenter = [](const std::vector<Geo::Point3<ScalarType>> &Poly)
+      -> Geo::Point3<ScalarType> {
     Geo::Point3<ScalarType> Bary(0, 0, 0);
-    if (Poly.empty()) return Bary;
+    if (Poly.empty())
+      return Bary;
 
     for (const auto &p : Poly)
       Bary += p;
@@ -182,13 +542,13 @@ void SmoothPolyScale(std::vector<std::vector<Geo::Point3<ScalarType>>> &TargetPo
     return Bary;
   };
 
-  auto PolyMeanEdge = [](const std::vector<Geo::Point3<ScalarType>> &Poly) -> ScalarType
-  {
-    if (Poly.size() < 2) return 0;
+  auto PolyMeanEdge =
+      [](const std::vector<Geo::Point3<ScalarType>> &Poly) -> ScalarType {
+    if (Poly.size() < 2)
+      return 0;
 
     ScalarType Sum = 0;
-    for (size_t i = 0; i < Poly.size(); ++i)
-    {
+    for (size_t i = 0; i < Poly.size(); ++i) {
       const auto &p0 = Poly[i];
       const auto &p1 = Poly[(i + 1) % Poly.size()];
       Sum += (p1 - p0).Norm();
@@ -196,47 +556,53 @@ void SmoothPolyScale(std::vector<std::vector<Geo::Point3<ScalarType>>> &TargetPo
     return Sum / ScalarType(Poly.size());
   };
 
-  for (int step = 0; step < Steps; ++step)
-  {
+  for (int step = 0; step < Steps; ++step) {
+    // NEW (parallel): every loop writes only its own face
     std::vector<ScalarType> OldScale(TargetPoly.size(), 0);
-    for (size_t i = 0; i < TargetPoly.size(); ++i)
+    ParallelFor(TargetPoly.size(), [&](size_t i) {
       OldScale[i] = PolyMeanEdge(TargetPoly[i]);
+    });
 
     std::vector<ScalarType> NewScale = OldScale;
 
-    for (size_t i = 0; i < TargetPoly.size(); ++i)
-    {
+    ParallelFor(TargetPoly.size(), [&](size_t i) {
       ScalarType SumW = 0;
       ScalarType SumS = 0;
 
-      for (size_t j = 0; j < Adj[i].size(); ++j)
-      {
+      for (size_t j = 0; j < Adj[i].size(); ++j) {
         int idx = Adj[i][j];
-        if (idx < 0 || idx >= (int)TargetPoly.size()) continue;
-        if (Weights[idx] <= 0) continue;
+        if (idx < 0 || idx >= (int)TargetPoly.size())
+          continue;
+        if (Weights[idx] <= 0)
+          continue;
+        if (OldScale[idx] <= 0)
+          continue; // skip degenerate neighbors as sources
 
         SumW += Weights[idx];
         SumS += Weights[idx] * OldScale[idx];
       }
 
-      if (SumW > 0)
-        NewScale[i] = SumS / SumW;
-    }
+      if (SumW > 0) {
+        ScalarType AvgScale = SumS / SumW;
+        NewScale[i] =
+            (ScalarType(1) - Lambda) * OldScale[i] + Lambda * AvgScale;
+      }
+    });
 
-    for (size_t i = 0; i < TargetPoly.size(); ++i)
-    {
-      if (TargetPoly[i].empty()) continue;
-      if (OldScale[i] <= 0) continue;
+    ParallelFor(TargetPoly.size(), [&](size_t i) {
+      if (TargetPoly[i].empty())
+        return;
+      if (OldScale[i] <= 0)
+        return;
 
       ScalarType ScaleFactor = NewScale[i] / OldScale[i];
       Geo::Point3<ScalarType> Bary = PolyBarycenter(TargetPoly[i]);
 
       for (size_t k = 0; k < TargetPoly[i].size(); ++k)
         TargetPoly[i][k] = Bary + (TargetPoly[i][k] - Bary) * ScaleFactor;
-    }
+    });
   }
 }
-
 
 } // namespace Geo
 

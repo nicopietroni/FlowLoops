@@ -31,6 +31,12 @@
 #include <box3.h>
 #include <point3.h>
 #include <triangle3.h>
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <iostream>
+#include <limits>
+#include <thread>
 #include <vector>
 
 namespace Geo {
@@ -159,15 +165,19 @@ public:
    *  \param closestF The index of the closest Face
    *  \param _closestPt The Coordinate of the closest point
    */
-  bool GridClosest(const std::vector<Geo::Point3<ScalarType>> &vert,
-                   const std::vector<std::vector<int>> &face,
-                   const CoordType &_p, const ScalarType &_maxDist,
-                   int &closestF, CoordType &_closestPt) {
+  // The search of GridClosest with the marks given (Mark: one per face,
+  // Stamp: the current mark), const: several threads can search at the
+  // same time, each with its own marks
+  bool GridClosestMarked(const std::vector<Geo::Point3<ScalarType>> &vert,
+                         const std::vector<std::vector<int>> &face,
+                         const CoordType &_p, const ScalarType &_maxDist,
+                         int &closestF, CoordType &_closestPt,
+                         std::vector<int> &Mark, int &Stamp) const {
     // std::cout<<"B"<<std::endl;
 
     ScalarType _minDist = _maxDist;
     closestF = -1;
-    TMark++;
+    Stamp++;
 
     ScalarType radius = voxel.Norm() / 4;
     Box3<int> iboxdone, iboxtodo;
@@ -194,11 +204,15 @@ public:
               GridIndex IndexP = GridIndex(ix, iy, iz);
               if (iboxdone.IsInEx(IndexP))
                 continue;
-              std::vector<int> to_test;
-              Get(IndexP, to_test);
+              // FIX (speed): the cell entries were copied into a new vector
+              // for every visited cell
+              // std::vector<int> to_test;
+              // Get(IndexP, to_test);
+              const std::vector<int> &to_test =
+                  Grid[IndexP.X][IndexP.Y][IndexP.Z].entries;
               for (size_t i = 0; i < to_test.size(); i++) {
                 int currT = to_test[i];
-                if (FaceMark[currT] >= TMark)
+                if (Mark[currT] >= Stamp)
                   continue;
                 // assert(FaceMark[currT]<TMark);//not already tested
                 int IndexV0 = face[currT][0];
@@ -216,11 +230,28 @@ public:
                 if (!triBB.Collide(boxtodo))
                   continue;
 
-                //                                std::cout<<"TestA"<<std::endl;
+
+                //check distance wrt bbox
+                // FIX: the box was centered on the triangle vertex p0, which
+                // is always inside the triangle box, so nothing was culled.
+                // Centered on the query point it discards only triangles
+                // farther than _minDist (rejected below anyway).
+                Box3<ScalarType> TestBB;
+                // TestBB.Set(p0);
+                TestBB.Set(_p);
+                TestBB.Inflate(_minDist);
+                if (!TestBB.Collide(triBB))
+                  continue;
+
+                //std::cout<<"TestA"<<std::endl;
                 Geo::Traingle3<ScalarType> T(p0, p1, p2);
 
                 CoordType closP = ClosestPoint(T, _p);
                 ScalarType currD = (closP - _p).Norm();
+                // FIX (speed): mark as soon as the exact distance is known.
+                // _minDist only decreases, so a triangle rejected now would
+                // be rejected again in the other cells it spans.
+                Mark[currT] = Stamp;
                 if (currD > _minDist)
                   continue;
 
@@ -229,7 +260,7 @@ public:
                   closestF = currT;
                   _closestPt = closP;
                 }
-                FaceMark[currT] = TMark;
+                // FaceMark[currT] = TMark;
               }
               // closestF=1;
             }
@@ -244,6 +275,61 @@ public:
     } while (_minDist > radius);
 
     return (closestF != -1);
+  }
+
+  bool GridClosest(const std::vector<Geo::Point3<ScalarType>> &vert,
+                   const std::vector<std::vector<int>> &face,
+                   const CoordType &_p, const ScalarType &_maxDist,
+                   int &closestF, CoordType &_closestPt) {
+    return GridClosestMarked(vert, face, _p, _maxDist, closestF, _closestPt,
+                             FaceMark, TMark);
+  }
+
+  // GridClosest of many points on several threads (the same result as one
+  // GridClosest per point: every search starts from fresh marks). Only: the
+  // points to search (NULL = all). ClosestF is -1 and ClosestPt the point
+  // itself where nothing is found (or not searched)
+  void GridClosestMany(const std::vector<Geo::Point3<ScalarType>> &vert,
+                       const std::vector<std::vector<int>> &face,
+                       const std::vector<CoordType> &Pts,
+                       const ScalarType &_maxDist, std::vector<int> &ClosestF,
+                       std::vector<CoordType> &ClosestPt,
+                       const std::vector<bool> *Only = NULL) const {
+    size_t N = Pts.size();
+    ClosestF.assign(N, -1);
+    ClosestPt = Pts;
+    unsigned int NumT = std::thread::hardware_concurrency();
+    if (NumT == 0)
+      NumT = 1;
+    NumT = (unsigned int)std::min<size_t>(NumT, std::max<size_t>(1, N / 500));
+    auto Work = [&](size_t B, size_t E) {
+      std::vector<int> Mark(face.size(), 0);
+      int Stamp = 0;
+      for (size_t i = B; i < E; i++) {
+        if ((Only != NULL) && !(*Only)[i])
+          continue;
+        int F = -1;
+        CoordType Q = Pts[i];
+        GridClosestMarked(vert, face, Pts[i], _maxDist, F, Q, Mark, Stamp);
+        ClosestF[i] = F;
+        if (F >= 0)
+          ClosestPt[i] = Q;
+      }
+    };
+    if (NumT <= 1) {
+      Work(0, N);
+      return;
+    }
+    std::vector<std::thread> Th;
+    size_t Block = (N + NumT - 1) / NumT;
+    for (unsigned int t = 0; t < NumT; t++) {
+      size_t B = t * Block, E = std::min(N, B + Block);
+      if (B >= E)
+        break;
+      Th.emplace_back(Work, B, E);
+    }
+    for (auto &T : Th)
+      T.join();
   }
 
   bool GridClosestBary(const std::vector<Geo::Point3<ScalarType>> &vert,
@@ -323,6 +409,164 @@ public:
         }
   }
 
+  /*! \brief Candidate faces of the cells overlapping a box (the exact
+   *  test is left to the caller: a face is returned once)
+   *  \param b The query box
+   *  \param out The faces
+   */
+  void FacesInBox(const Box3<ScalarType> &b, std::vector<int> &out) {
+    out.clear();
+    Box3<ScalarType> bf = b;
+    bf.Intersect(bbox);
+    if (bf.IsEmpty())
+      return;
+    Box3<int> ib;
+    BoxToIBox(bf, ib);
+    TMark++;
+    int X0 = std::max(0, ib.Min.X), X1 = std::min(siz.X - 1, ib.Max.X);
+    int Y0 = std::max(0, ib.Min.Y), Y1 = std::min(siz.Y - 1, ib.Max.Y);
+    int Z0 = std::max(0, ib.Min.Z), Z1 = std::min(siz.Z - 1, ib.Max.Z);
+    for (int xi = X0; xi <= X1; xi++)
+      for (int yi = Y0; yi <= Y1; yi++)
+        for (int zi = Z0; zi <= Z1; zi++)
+          for (int f : Grid[xi][yi][zi].entries) {
+            if (FaceMark[f] >= TMark)
+              continue;
+            FaceMark[f] = TMark;
+            out.push_back(f);
+          }
+  }
+
+  /*! \brief Ray / triangle intersection (Moller-Trumbore): t such that
+   *  O + t*D lies on the triangle (A,B,C); false if parallel or outside
+   */
+  static bool RayTriangle(const CoordType &O, const CoordType &D,
+                          const CoordType &A, const CoordType &B,
+                          const CoordType &C, ScalarType &t) {
+    CoordType E1 = B - A;
+    CoordType E2 = C - A;
+    CoordType Pv = Geo::Cross(D, E2);
+    ScalarType Det = Geo::Dot(E1, Pv);
+    ScalarType Scale = E1.Norm() * E2.Norm() * D.Norm();
+    if (std::fabs(Det) <= (ScalarType)1e-12 * Scale)
+      return false;
+    ScalarType Inv = 1 / Det;
+    CoordType S = O - A;
+    ScalarType U = Geo::Dot(S, Pv) * Inv;
+    if ((U < 0) || (U > 1))
+      return false;
+    CoordType Q = Geo::Cross(S, E1);
+    ScalarType V = Geo::Dot(D, Q) * Inv;
+    if ((V < 0) || (U + V > 1))
+      return false;
+    t = Geo::Dot(E2, Q) * Inv;
+    return true;
+  }
+
+  /*! \brief First face hit by the segment O + t*Dir, t in (MinT, MaxT]
+   *  (t in units of Dir). The cells crossed by the segment are visited in
+   *  order (3D DDA), the search stops as soon as the closest hit is inside
+   *  the cells already visited.
+   *  \param vert The vertex vector of the input mesh
+   *  \param face The face vector of the input mesh
+   *  \param O The origin of the ray
+   *  \param Dir The direction of the ray
+   *  \param MinT Hits with t <= MinT are ignored (e.g. the origin itself)
+   *  \param MaxT The end of the segment
+   *  \param HitF The face hit (-1 if none)
+   *  \param HitT The parameter of the hit
+   *  \param Skip Faces to ignore (e.g. the ones incident to the origin)
+   */
+  bool GridRayFirstHit(const std::vector<Geo::Point3<ScalarType>> &vert,
+                       const std::vector<std::vector<int>> &face,
+                       const CoordType &O, const CoordType &Dir,
+                       const ScalarType MinT, const ScalarType MaxT,
+                       int &HitF, ScalarType &HitT,
+                       const std::vector<int> *Skip = nullptr) {
+    HitF = -1;
+    HitT = MaxT;
+    const ScalarType Inf = std::numeric_limits<ScalarType>::max();
+    ScalarType o[3] = {O.X, O.Y, O.Z};
+    ScalarType d[3] = {Dir.X, Dir.Y, Dir.Z};
+    ScalarType bmin[3] = {bbox.Min.X, bbox.Min.Y, bbox.Min.Z};
+    ScalarType bmax[3] = {bbox.Max.X, bbox.Max.Y, bbox.Max.Z};
+    ScalarType vox[3] = {voxel.X, voxel.Y, voxel.Z};
+    int sz[3] = {siz.X, siz.Y, siz.Z};
+    // the part of the segment inside the box
+    ScalarType t0 = std::max(MinT, (ScalarType)0), t1 = MaxT;
+    for (int a = 0; a < 3; a++) {
+      if (d[a] == 0) {
+        if ((o[a] < bmin[a]) || (o[a] > bmax[a]))
+          return false;
+        continue;
+      }
+      ScalarType ta = (bmin[a] - o[a]) / d[a];
+      ScalarType tb = (bmax[a] - o[a]) / d[a];
+      if (ta > tb)
+        std::swap(ta, tb);
+      t0 = std::max(t0, ta);
+      t1 = std::min(t1, tb);
+    }
+    if (t0 > t1)
+      return false;
+    // first cell, steps
+    int c[3], step[3];
+    ScalarType tMax[3], tDelta[3];
+    for (int a = 0; a < 3; a++) {
+      ScalarType p = o[a] + d[a] * t0;
+      c[a] = (int)std::floor((p - bmin[a]) / vox[a]);
+      c[a] = std::max(0, std::min(sz[a] - 1, c[a]));
+      if (d[a] > 0) {
+        step[a] = 1;
+        tMax[a] = (bmin[a] + (c[a] + 1) * vox[a] - o[a]) / d[a];
+        tDelta[a] = vox[a] / d[a];
+      } else if (d[a] < 0) {
+        step[a] = -1;
+        tMax[a] = (bmin[a] + c[a] * vox[a] - o[a]) / d[a];
+        tDelta[a] = -vox[a] / d[a];
+      } else {
+        step[a] = 0;
+        tMax[a] = Inf;
+        tDelta[a] = Inf;
+      }
+    }
+    TMark++;
+    while (true) {
+      for (int f : Grid[c[0]][c[1]][c[2]].entries) {
+        if (FaceMark[f] >= TMark)
+          continue;
+        FaceMark[f] = TMark;
+        if ((Skip != nullptr) &&
+            (std::find(Skip->begin(), Skip->end(), f) != Skip->end()))
+          continue;
+        ScalarType t;
+        if (!RayTriangle(O, Dir, vert[face[f][0]], vert[face[f][1]],
+                         vert[face[f][2]], t))
+          continue;
+        if ((t <= MinT) || (t > HitT))
+          continue;
+        HitT = t;
+        HitF = f;
+      }
+      ScalarType tExit = std::min(tMax[0], std::min(tMax[1], tMax[2]));
+      // the closest hit is in the cells already visited
+      if ((HitF >= 0) && (HitT <= tExit))
+        break;
+      if (tExit > t1)
+        break;
+      int a = 0;
+      if (tMax[1] < tMax[a])
+        a = 1;
+      if (tMax[2] < tMax[a])
+        a = 2;
+      c[a] += step[a];
+      if ((c[a] < 0) || (c[a] >= sz[a]))
+        break;
+      tMax[a] += tDelta[a];
+    }
+    return (HitF >= 0);
+  }
+
   /*! \brief Initialize the search structure
    *  \param vert The vertex vector of the input mesh
    *  \param face The face vector of the input mesh
@@ -379,6 +623,51 @@ public:
     }
     for (size_t i = 0; i < face.size(); i++)
       Insert(vert, face, i);
+  }
+
+   /*! \brief Print statistics about the grid: total cells, non-empty cells,
+   *  average/min/max faces per non-empty cell. Utile per capire se la
+   *  risoluzione della griglia (BestDim) è ben calibrata rispetto alla
+   *  densità della mesh, prima di guardare altrove. */
+  void PrintGridStats() const {
+    size_t totalCells = (size_t)siz.X * (size_t)siz.Y * (size_t)siz.Z;
+    size_t nonEmptyCells = 0;
+    size_t totalEntries = 0;
+    size_t minEntries = (size_t)-1;
+    size_t maxEntries = 0;
+
+    for (size_t i = 0; i < Grid.size(); i++)
+      for (size_t j = 0; j < Grid[i].size(); j++)
+        for (size_t k = 0; k < Grid[i][j].size(); k++) {
+          size_t n = Grid[i][j][k].entries.size();
+          if (n == 0)
+            continue;
+          nonEmptyCells++;
+          totalEntries += n;
+          if (n < minEntries)
+            minEntries = n;
+          if (n > maxEntries)
+            maxEntries = n;
+        }
+
+    double avgPerNonEmpty =
+        nonEmptyCells > 0 ? (double)totalEntries / (double)nonEmptyCells : 0.0;
+    double occupancy =
+        totalCells > 0 ? (double)nonEmptyCells / (double)totalCells : 0.0;
+
+    std::cout << "===== TriangleSpatialIndex stats =====" << std::endl;
+    std::cout << "Grid dim:            " << siz.X << " x " << siz.Y << " x "
+              << siz.Z << " (" << totalCells << " cells)" << std::endl;
+    std::cout << "Voxel size:          " << voxel.X << ", " << voxel.Y << ", "
+              << voxel.Z << std::endl;
+    std::cout << "Non-empty cells:     " << nonEmptyCells << " ("
+              << (occupancy * 100.0) << " % occupancy)" << std::endl;
+    std::cout << "Total face entries:  " << totalEntries
+              << " (a face can be counted in multiple cells)" << std::endl;
+    std::cout << "Faces per non-empty cell: avg=" << avgPerNonEmpty
+              << " min=" << (nonEmptyCells > 0 ? minEntries : 0)
+              << " max=" << maxEntries << std::endl;
+    std::cout << "=======================================" << std::endl;
   }
 
   /*! \brief Base constructor */

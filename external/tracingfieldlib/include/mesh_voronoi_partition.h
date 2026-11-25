@@ -30,6 +30,7 @@
 #include "mesh_functions.h"
 #include "mesh_subdivide.h"
 #include "point3.h"
+#include "polygon3.h"
 #include "pos3.h"
 #include <array>
 #include <cassert>
@@ -37,6 +38,7 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <thread>
 #include <vector>
 #define PARALLEL_VORONOI
 
@@ -187,7 +189,8 @@ public:
     assert(VoronoiVertPos.size() == OrigVertFaces.size());
     assert(VoronoiVertPos.size() == OrigVertFacesEdge.size());
 
-    for (size_t i = 0; i < VoronoiVertPos.size(); i++) {
+    // NEW (parallel): every vertex written only by its own iteration
+    Geo::ParallelFor(VoronoiVertPos.size(), [&](size_t i) {
       // only one at the time can be valid, if the vertex corresponds to an
       // original vertex,
       //  then it cannot correspond to a face or edge,
@@ -205,7 +208,7 @@ public:
         }
         int IndexV = OrigVertVert[i];
         VoronoiVertPos[i] = OriginalVertPos[IndexV];
-        continue;
+        return;
       }
 
       if (OrigVertFaces[i] != -1) {
@@ -219,7 +222,7 @@ public:
         int IndexF = OrigVertFaces[i];
         VoronoiVertPos[i] = ComputeFaceBarycenter<ScalarType>(
             OriginalVertPos, OriginalFaces, IndexF);
-        continue;
+        return;
       }
 
       if (OrigVertFacesEdge[i].first != -1) {
@@ -234,15 +237,17 @@ public:
         int IndexE1 = OrigVertFacesEdge[i].second;
         VoronoiVertPos[i] =
             (OriginalVertPos[IndexE0] + OriginalVertPos[IndexE1]) * 0.5;
-        continue;
+        return;
       }
-    }
+    });
 
     assert(ReprojBasisIndex.size() == OriginalVertPos.size());
-    ReprojBasis.clear();
+    // NEW (speed): the basis kept (same sizes at every update, only the
+    // triangles change), filled in parallel
     ReprojBasis.resize(OriginalVertPos.size());
-    for (size_t i = 0; i < OriginalVertPos.size(); i++) {
+    Geo::ParallelFor(OriginalVertPos.size(), [&](size_t i) {
       // go over all faces
+      ReprojBasis[i].clear();
       ReprojBasis[i].reserve(ReprojBasisIndex[i].size());
       for (size_t j = 0; j < ReprojBasisIndex[i].size(); j++) {
         std::array<int, 3> TIdx = ReprojBasisIndex[i][j];
@@ -258,7 +263,7 @@ public:
         Geo::Traingle3<ScalarType> T(P0, P1, P2);
         ReprojBasis[i].push_back(T);
       }
-    }
+    });
   }
 
   MeshVoronoiPartition(const std::vector<Geo::Point3<ScalarType>> &VertPos,

@@ -108,27 +108,39 @@ void InitFromConstraints(
 //     // Init + Solve can be called repeatedly; every Init re-factorises.
 //
 //   INCREMENTAL MODE  (incrementalMode = true)
-//     Designed for iterative integer solvers that fix one variable per step.
+//     Designed for iterative integer solvers that fix one or several
+//     variables per step.
 //
 //     Key insight: fixing variable i only adds w^2 to the diagonal entry
 //     (i,i) of A^T A, which is always a structural non-zero.  So the sparsity
-//     pattern never changes and analyzePattern() needs to be called only once.
+//     pattern never changes and analyzePattern() needs to be called only once
+//     — every subsequent factorize() reuses the stored symbolic pattern
+//     (numeric-only refactorization).
 //
-//     Factorization is DEFERRED to Solve(): AddFixedVariable() only updates
-//     AtA_current (one coeffRef) and Atb_current (one entry).  Solve() calls
-//     factorize() exactly once per solve, regardless of how many variables
-//     were fixed since the last call.  This makes batched fixes (e.g. LNS
-//     RestoreStateExcept re-applying thousands of fixes) cost one factorize
-//     instead of one per variable.
+//     NOTE on rank-1 updates: Eigen's SimplicialLDLT/SimplicialCholesky do
+//     NOT expose a public rankUpdate() for sparse matrices (only the DENSE
+//     Eigen::LDLT has that method) — so a true O(fill) incremental update of
+//     the sparse factorization is not available in plain Eigen.  Getting
+//     that would require CHOLMOD (SuiteSparse), which supports
+//     cholmod_updown, but Eigen's CholmodSupport wrapper doesn't expose it
+//     either — you'd need to call the SuiteSparse C API directly on the
+//     underlying cholmod_factor.  Worth doing later if this remains a
+//     bottleneck; not implemented here to avoid adding a new dependency
+//     without discussing it first.
 //
-//     Cost comparison per greedy iteration:
-//       original:    analyzePattern + factorize  ~O(n^1.5)
-//       incremental: factorize only              ~O(n^1.2) on sparse systems
-//       ideal:       true rank-1 update          ~O(nnz)  (needs Eigen >= 3.4)
+//     Instead, AddFixedVariable() is DEFERRED and BATCHED: it only updates
+//     AtA_current/Atb_current (O(1) coeffRef), and factorize() is triggered
+//     lazily inside Solve() — once per Solve() call regardless of how many
+//     fixes were accumulated since the last one.  Combined with the
+//     integer solver's batch-fixing feature (fixing several variables per
+//     greedy iteration before the next Solve()), this cuts the number of
+//     factorize() calls by roughly the batch size — a real, measurable
+//     speedup without needing a rank update primitive that doesn't exist
+//     here.
 //
 //     solver.InitIncremental(baseConstraints);   // analyzePattern once
 //     solver.AddFixedVariable(idx, val, w);      // O(1) — deferred
-//     solver.Solve(solution);                    // factorize + solve
+//     solver.Solve(solution);                    // factorize (numeric only) + solve
 //     solver.ResetToBase();                      // O(1) reset + deferred
 // =============================================================================
 template <class ScalarType>
@@ -145,6 +157,11 @@ class LinearConstraintLeastSQSolver {
   Eigen::SimplicialCholesky<Eigen::SparseMatrix<ScalarType>> *solverDefault;
 
   // ---- incremental-mode solver (persistent, pattern fixed after Init) ------
+  // Kept as a separate persistent object from solverDefault so default-mode
+  // usage elsewhere in the codebase is completely untouched by incremental
+  // mode.  analyzePattern() is called once (InitIncremental); every later
+  // factorize() call reuses that symbolic pattern (numeric-only, cheaper
+  // than analyzePattern + factorize from scratch).
   Eigen::SimplicialCholesky<Eigen::SparseMatrix<ScalarType>> solverIncremental;
 
   // Base matrices — saved at InitIncremental(), never modified.
@@ -163,7 +180,8 @@ class LinearConstraintLeastSQSolver {
   bool incrementalReady;
 
   // True when AtA_current / Atb_current have been modified since the last
-  // factorize() call.  Factorize is triggered lazily inside Solve().
+  // factorize() call.  Factorize is triggered lazily inside Solve(), so a
+  // batch of AddFixedVariable() calls costs exactly one factorize().
   bool factorizationDirty;
 
   // ---- internal helpers ---------------------------------------------------
@@ -218,7 +236,7 @@ public:
 
     if (incrementalMode) {
       // Lazy factorize: pays the cost once even after many AddFixedVariable
-      // calls made since the last Solve().
+      // calls (e.g. a whole batch fix) made since the last Solve().
       RefactorizeIfNeeded();
 
       Eigen::VectorX<ScalarType> x = solverIncremental.solve(Atb_current);
@@ -329,11 +347,14 @@ public:
 
   // Accumulates the fix  x[varIdx] = value  into AtA_current / Atb_current.
   // Cost: O(1) — just one coeffRef and one vector entry update.
-  // Factorization is deferred to the next Solve() call.
+  // Factorization is deferred to the next Solve() call, so fixing several
+  // variables (e.g. a batch) before the next Solve() pays for exactly one
+  // factorize() instead of one per variable.
   //
   // Mathematically:  AtA_current(i,i) += w^2,  Atb_current(i) += w^2 * value
   // The diagonal entry (i,i) is always a structural non-zero in A^T A,
-  // so the sparsity pattern is never altered.
+  // so the sparsity pattern is never altered — every factorize() call is
+  // numeric-only (reuses the pattern from InitIncremental's analyzePattern).
   void AddFixedVariable(int varIdx, ScalarType value, ScalarType w) {
     assert(incrementalMode && incrementalReady);
     assert(varIdx < A0.cols());
@@ -346,7 +367,8 @@ public:
   }
 
   // Resets AtA_current and Atb_current to the base state.
-  // Cost: O(n) sparse copy + deferred factorize.
+  // Cost: O(nnz) sparse copy + deferred factorize (numeric-only — the
+  // symbolic pattern from InitIncremental is still valid and reused).
   // Used by LNS to undo all variable fixes before re-applying a subset.
   void ResetToBase() {
     assert(incrementalMode);
@@ -359,7 +381,7 @@ public:
 
   // Convenience batch re-apply — used by LNS after ResetToBase().
   // All fixes are accumulated with O(1) each; factorize happens once in
-  // the following Solve().
+  // the following Solve() (numeric-only, pattern already known).
   void ReApplyFixes(const std::vector<int> &varIndices,
                     const std::vector<int> &varValues,
                     ScalarType              w) {

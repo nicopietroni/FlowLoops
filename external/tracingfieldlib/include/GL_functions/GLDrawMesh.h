@@ -38,6 +38,7 @@
 #include <cassert>
 // #include <sys/_types/_size_t.h>
 #include <cstddef> // C++
+#include <map>
 #include <vector>
 
 namespace GLDraw {
@@ -659,9 +660,101 @@ void DrawSurfaceMesh(const std::vector<Geo::Point3<ScalarType>> &VertPos,
   glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
 
   if (drawire) {
-    glColor4f(.3f, .3f, .3f, .3f);
+    // glColor4f(.3f, .3f, .3f, .3f);
+    // (more visible: dark and fully opaque, no blending)
+    // glColor4f(.15f, .15f, .15f, .7f);
+    glDisable(GL_BLEND);
+    // (the width set by other drawings, e.g. the graph, was kept)
+    glLineWidth(1.f);
+    glColor4f(.1f, .1f, .1f, 1.f);
     DrawSurfaceWire<CoordType>(VertPos, Connectivity);
   }
+  glPopAttrib();
+}
+
+// a surface drawn as a thin slab (to see how thin or folded surfaces go):
+// the two copies offset by +/- Thickness/2 along the vertex normals, and the
+// side walls along the border edges. FaceCol: one color per face (optional,
+// otherwise the current color)
+template <class ScalarType>
+void DrawSurfaceThick(const std::vector<Geo::Point3<ScalarType>> &VertPos,
+                      const std::vector<std::vector<int>> &Connectivity,
+                      const std::vector<Geo::Point3<ScalarType>> &VertNormal,
+                      const ScalarType Thickness,
+                      const std::vector<Geo::Point3<ScalarType>> *FaceCol =
+                          NULL) {
+  typedef typename Geo::Point3<ScalarType> CoordType;
+  if (VertNormal.size() != VertPos.size())
+    return;
+  std::vector<CoordType> PUp(VertPos.size()), PDown(VertPos.size());
+  for (size_t i = 0; i < VertPos.size(); i++) {
+    CoordType N = VertNormal[i];
+    N.Normalize();
+    PUp[i] = VertPos[i] + N * (Thickness / 2);
+    PDown[i] = VertPos[i] - N * (Thickness / 2);
+  }
+  // border edges (one face), with the face for the color
+  std::map<std::pair<int, int>, std::pair<int, int>> EdgeCount; // count, face
+  for (size_t f = 0; f < Connectivity.size(); f++)
+    for (size_t j = 0; j < Connectivity[f].size(); j++) {
+      int V0 = Connectivity[f][j];
+      int V1 = Connectivity[f][(j + 1) % Connectivity[f].size()];
+      std::pair<int, int> K(std::min(V0, V1), std::max(V0, V1));
+      EdgeCount[K].first++;
+      EdgeCount[K].second = (int)f;
+    }
+
+  glPushAttrib(GL_ALL_ATTRIB_BITS);
+  glEnable(GL_LIGHTING);
+  glEnable(GL_LIGHT0);
+  glEnable(GL_COLOR_MATERIAL);
+  glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE);
+  glBegin(GL_TRIANGLES);
+  for (size_t f = 0; f < Connectivity.size(); f++) {
+    const std::vector<int> &F = Connectivity[f];
+    if (F.size() < 3)
+      continue;
+    if (FaceCol != NULL)
+      glColor((*FaceCol)[f]);
+    for (size_t k = 1; k + 1 < F.size(); k++) {
+      int Idx[3] = {F[0], F[k], F[k + 1]};
+      // upper copy
+      CoordType NU = Geo::Cross(PUp[Idx[1]] - PUp[Idx[0]],
+                                PUp[Idx[2]] - PUp[Idx[0]]);
+      NU.Normalize();
+      glNormal(NU);
+      for (int j = 0; j < 3; j++)
+        glVertex(PUp[Idx[j]]);
+      // lower copy (reversed)
+      CoordType ND = Geo::Cross(PDown[Idx[2]] - PDown[Idx[0]],
+                                PDown[Idx[1]] - PDown[Idx[0]]);
+      ND.Normalize();
+      glNormal(ND);
+      for (int j = 2; j >= 0; j--)
+        glVertex(PDown[Idx[j]]);
+    }
+  }
+  glEnd();
+  // side walls
+  glBegin(GL_QUADS);
+  for (typename std::map<std::pair<int, int>, std::pair<int, int>>::iterator
+           it = EdgeCount.begin();
+       it != EdgeCount.end(); it++) {
+    if (it->second.first != 1)
+      continue;
+    int V0 = it->first.first, V1 = it->first.second;
+    if (FaceCol != NULL)
+      glColor((*FaceCol)[it->second.second]);
+    CoordType NS = Geo::Cross(VertPos[V1] - VertPos[V0],
+                              VertNormal[V0] + VertNormal[V1]);
+    NS.Normalize();
+    glNormal(NS);
+    glVertex(PUp[V0]);
+    glVertex(PUp[V1]);
+    glVertex(PDown[V1]);
+    glVertex(PDown[V0]);
+  }
+  glEnd();
   glPopAttrib();
 }
 

@@ -121,6 +121,7 @@ template <class ScalarType> class MeshSymmetry {
         TriConnectivity = NewConnectivity;
         return;
       } else {
+        size_t NumToDelete0 = ToDeleteFaceSet.size();
         for (size_t i = 0; i < NonManifoldV.size(); i++) {
           int IndexV = NonManifoldV[i];
           ToSnapVert.erase(std::remove(ToSnapVert.begin(), ToSnapVert.end(), IndexV),
@@ -136,6 +137,13 @@ template <class ScalarType> class MeshSymmetry {
                                 ToSnapVert.end());
             }
           }
+        }
+        // FIX (infinite loop): no face reintroduced, so the remaining
+        // non-manifold vertices were already non-manifold in the input mesh;
+        // reintroducing cannot fix them, keep this connectivity and stop
+        if (ToDeleteFaceSet.size() == NumToDelete0) {
+          TriConnectivity = NewConnectivity;
+          return;
         }
       }
 

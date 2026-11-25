@@ -1455,7 +1455,13 @@ inline int ExpectedValence(const std::vector<Geo::Point3<ScalarType>> &Pos,
                            const std::vector<std::vector<int>> &VFIndex,
                            const int IndexV) {
   ScalarType AngleV = ComputePerVertAngleDeg(Pos, Faces, VF, VFIndex, IndexV);
-  int ExpVal = floor(0.5 + AngleV / 60);
+  // FIX: angle sums of 30+60k degrees (90 deg border corners, 270 deg cube
+  // corners: very common on CAD meshes) fall exactly on the rounding
+  // boundary; numerical noise of the angles (which depends on the current
+  // triangulation) made the expected valence jump at every flip, so valence
+  // flips undid each other forever. A tiny bias makes the rounding stable.
+  // int ExpVal = floor(0.5 + AngleV / 60);
+  int ExpVal = floor(0.5 + AngleV / 60 + (ScalarType)1e-6);
   ExpVal = std::max(ExpVal, 1);
   return ExpVal;
 }
@@ -1521,7 +1527,9 @@ inline bool
 SplitNonManifoldBorderV(std::vector<Geo::Point3<ScalarType>> &Pos,
                         std::vector<std::vector<int>> &Faces,
                         const std::vector<std::vector<int>> &NextF,
-                        const std::vector<std::vector<int>> &NextE) {
+                        const std::vector<std::vector<int>> &NextE,
+                        std::vector<int> *SourceV = NULL) {
+  // NEW (SourceV): for every vertex added, the vertex it is a copy of
 
   std::unordered_map<int, std::vector<std::vector<Pos3>>> VertFacesFun;
   assert(Faces.size() == NextF.size());
@@ -1561,6 +1569,8 @@ SplitNonManifoldBorderV(std::vector<Geo::Point3<ScalarType>> &Pos,
     // duplicate the vertex
     for (size_t j = 1; j < (*ite_map).second.size(); j++) {
       Pos.push_back(Pos[IndexV]);
+      if (SourceV != NULL)
+        SourceV->push_back(IndexV);
       splitted = true;
       // change each reference
       for (size_t k = 0; k < (*ite_map).second[j].size(); k++) {
@@ -1598,7 +1608,9 @@ SplitMeshFromEdges(std::vector<Geo::Point3<ScalarType>> &Pos,
                    std::vector<std::vector<int>> &Faces,
                    const std::vector<std::vector<int>> &NextF,
                    const std::vector<std::vector<int>> &NextE,
-                   const std::vector<std::pair<int, int>> &SplitEdges) {
+                   const std::vector<std::pair<int, int>> &SplitEdges,
+                   std::vector<int> *SourceV = NULL) {
+  // NEW (SourceV): for every vertex added, the vertex it is a copy of
   std::set<std::pair<int, int>> SplitEdgeSet(SplitEdges.begin(),
                                              SplitEdges.end());
   //    std::vector<std::vector<int> > NextF,NextE;
@@ -1672,6 +1684,8 @@ SplitMeshFromEdges(std::vector<Geo::Point3<ScalarType>> &Pos,
       // vertex
       for (size_t k = 1; k < PosPartitions.size(); k++) {
         NewPos.push_back(VertPos);
+        if (SourceV != NULL)
+          SourceV->push_back(StartP.V);
         int newVIndex = NewPos.size() - 1;
         for (size_t w = 0; w < PosPartitions[k].size(); w++) {
           int IndexF = PosPartitions[k][w].F;

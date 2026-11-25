@@ -124,7 +124,8 @@ public:
 
   static void GetCurveCycleData(const PatchManaging<ScalarType> &PMan,
                                 std::vector<CurveData> &Curves,
-                                std::vector<CycleData> &Cycles) {
+                                std::vector<CycleData> &Cycles,
+                                const std::set<int> &OnlyPatchIndices=std::set<int>()) {
     Curves.clear();
     Cycles.clear();
 
@@ -141,6 +142,9 @@ public:
 
     // PatchMan.GetPerPatchSubSidesWithSplitTJunction(PatchSubsides);
     for (size_t i = 0; i < PMan.PData.SubPatchVertPos.size(); i++) {
+      if ((OnlyPatchIndices.size() > 0) &&
+          (OnlyPatchIndices.count(i) == 0))
+        continue;
       std::vector<Geo::Point3<ScalarType>> SubPVert =
           PMan.PData.SubPatchVertPos[i];
       std::vector<std::vector<int>> SubPFace = PMan.PData.SubPatchFaces[i];
@@ -352,11 +356,12 @@ public:
   static bool SaveCurveCycleData(const PatchManaging<ScalarType> &PMan,
                                  const std::string PathSave,
                                  std::vector<std::pair<int, int>> &Features,
-                                 int ReductionFactor = 1) {
+                                 int ReductionFactor = 1,
+                                 const std::set<int> &OnlyPatchIndices=std::set<int>()) {
     // PMan.WriteMesh(std::string("./debug_curve_cycle_mesh.obj"));
     std::vector<CurveData> Curves;
     std::vector<CycleData> Cycles;
-    GetCurveCycleData(PMan, Curves, Cycles);
+    GetCurveCycleData(PMan, Curves, Cycles, OnlyPatchIndices);
 
     if (ReductionFactor > 1) {
 

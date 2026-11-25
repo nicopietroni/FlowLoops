@@ -35,6 +35,7 @@ namespace Geo {
 enum SmoothType {
   SMLaplacian,
   // SMBiLaplacian,
+  SMAngleBased,
   SMTaubin,
   SMBestPoly,
   SMCentroid
@@ -57,6 +58,7 @@ template <class ScalarType> struct SmoothParam {
   bool line_neight_features;
   bool reproject_voronoi_partition;
   bool check_multi_pass_fold;
+  bool reproj_tangent;
   ScalarType reproj_dist_THR;
   std::vector<Geo::Point3<ScalarType>> PrevVertPos;
     
@@ -79,10 +81,11 @@ template <class ScalarType> struct SmoothParam {
     SType = SMLaplacian;
     check_AspectR = false;
     no_reproj_feat_endpoints = true;
-    line_neight_features = true;
+    line_neight_features = false;
     reproject_voronoi_partition = false;
     check_multi_pass_fold = false;
     reproj_dist_THR=0.1;
+    reproj_tangent = false;
     // adaptive_features_smooth = false;
   }
 };

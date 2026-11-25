@@ -55,48 +55,48 @@ template <class ScalarType> class RemeshSize {
   typedef typename std::pair<Geo::Point3<ScalarType>, Geo::Point3<ScalarType>>
       EdgePosK;
 
-  static void
-  GetSubFeatureMesh(const std::vector<Geo::Point3<ScalarType>> &SubMeshVertPos,
-                    const std::vector<std::vector<int>> &SubMeshFaces,
-                    const std::set<EdgePosK> &FeaturesPos,
-                    std::vector<Geo::Point3<ScalarType>> &SubEdgeVertPos,
-                    std::vector<std::vector<int>> &SubEdges) {
-    // get which fetures are stil there
-    std::vector<std::pair<int, int>> SubMeshFeatures;
-    for (size_t i = 0; i < SubMeshFaces.size(); i++)
-      for (size_t j = 0; j < SubMeshFaces[i].size(); j++) {
-        int SizeF = SubMeshFaces[i].size();
-        int IndexV0 = SubMeshFaces[i][j];
-        int IndexV1 = SubMeshFaces[i][(j + 1) % SizeF];
-        Geo::Point3<ScalarType> Pos0 = SubMeshVertPos[IndexV0];
-        Geo::Point3<ScalarType> Pos1 = SubMeshVertPos[IndexV1];
-        EdgePosK Key(std::min(Pos0, Pos1), std::max(Pos0, Pos1));
-        if (FeaturesPos.count(Key) == 0)
-          continue;
-        std::pair<int, int> keyFeature(std::min(IndexV0, IndexV1),
-                                       std::max(IndexV0, IndexV1));
-        SubMeshFeatures.push_back(keyFeature);
-      }
+  // static void
+  // GetSubFeatureMesh(const std::vector<Geo::Point3<ScalarType>> &SubMeshVertPos,
+  //                   const std::vector<std::vector<int>> &SubMeshFaces,
+  //                   const std::set<EdgePosK> &FeaturesPos,
+  //                   std::vector<Geo::Point3<ScalarType>> &SubEdgeVertPos,
+  //                   std::vector<std::vector<int>> &SubEdges) {
+  //   // get which fetures are stil there
+  //   std::vector<std::pair<int, int>> SubMeshFeatures;
+  //   for (size_t i = 0; i < SubMeshFaces.size(); i++)
+  //     for (size_t j = 0; j < SubMeshFaces[i].size(); j++) {
+  //       int SizeF = SubMeshFaces[i].size();
+  //       int IndexV0 = SubMeshFaces[i][j];
+  //       int IndexV1 = SubMeshFaces[i][(j + 1) % SizeF];
+  //       Geo::Point3<ScalarType> Pos0 = SubMeshVertPos[IndexV0];
+  //       Geo::Point3<ScalarType> Pos1 = SubMeshVertPos[IndexV1];
+  //       EdgePosK Key(std::min(Pos0, Pos1), std::max(Pos0, Pos1));
+  //       if (FeaturesPos.count(Key) == 0)
+  //         continue;
+  //       std::pair<int, int> keyFeature(std::min(IndexV0, IndexV1),
+  //                                      std::max(IndexV0, IndexV1));
+  //       SubMeshFeatures.push_back(keyFeature);
+  //     }
 
-    std::sort(SubMeshFeatures.begin(), SubMeshFeatures.end());
-    SubMeshFeatures.erase(
-        std::unique(SubMeshFeatures.begin(), SubMeshFeatures.end()),
-        SubMeshFeatures.end());
+  //   std::sort(SubMeshFeatures.begin(), SubMeshFeatures.end());
+  //   SubMeshFeatures.erase(
+  //       std::unique(SubMeshFeatures.begin(), SubMeshFeatures.end()),
+  //       SubMeshFeatures.end());
 
-    std::vector<std::pair<int, int>> EdgesPair;
-    // Geo::EdgeMeshFunctions<ScalarType>::ExtractFromFeatures(
-    //     SubMeshVertPos, SubMeshFaces, SubMeshFeatures, SubEdgeVertPos,
-    //     EdgesPair);
-     Geo::EdgeMeshFunctions<ScalarType>::ExtractFromFeatures(
-        SubMeshVertPos, SubMeshFeatures, SubEdgeVertPos,
-        EdgesPair);
+  //   std::vector<std::pair<int, int>> EdgesPair;
+  //   // Geo::EdgeMeshFunctions<ScalarType>::ExtractFromFeatures(
+  //   //     SubMeshVertPos, SubMeshFaces, SubMeshFeatures, SubEdgeVertPos,
+  //   //     EdgesPair);
+  //    Geo::EdgeMeshFunctions<ScalarType>::ExtractFromFeatures(
+  //       SubMeshVertPos, SubMeshFeatures, SubEdgeVertPos,
+  //       EdgesPair);
 
-    for (size_t i = 0; i < EdgesPair.size(); i++) {
-      SubEdges.resize(SubEdges.size() + 1);
-      SubEdges.back().push_back(EdgesPair[i].first);
-      SubEdges.back().push_back(EdgesPair[i].second);
-    }
-  }
+  //   for (size_t i = 0; i < EdgesPair.size(); i++) {
+  //     SubEdges.resize(SubEdges.size() + 1);
+  //     SubEdges.back().push_back(EdgesPair[i].first);
+  //     SubEdges.back().push_back(EdgesPair[i].second);
+  //   }
+  // }
 
   static ScalarType GetPercentile(const std::vector<ScalarType> &VertSize,
                                   const ScalarType PercVal,
@@ -118,17 +118,6 @@ template <class ScalarType> class RemeshSize {
   }
 
 public:
-  // static void SampleWithBorderRegular(
-  //       const int NumVert, const std::vector<std::vector<int>> &Faces,
-  //       const int StepSize, const int MinSamplePerBorder,
-  //       std::vector<int> &Selected, std::vector<int> *SampleFrom = NULL,
-  //       int RandSeed = 0) {
-  //     std::vector<std::vector<int>> NextF, NextE;
-  //     Geo::getFFAdjacency(Faces, NextF, NextE);
-  //     SampleWithBorderRegular(NumVert, Faces, NextF, NextE, StepSize,
-  //                             MinSamplePerBorder, Selected, SampleFrom,
-  //                             RandSeed);
-  //   }
 
   static ScalarType
   RemeshSizeFeatures(const std::vector<Geo::Point3<ScalarType>> &VertPos,
@@ -232,7 +221,7 @@ public:
 
       std::vector<Geo::Point3<ScalarType>> SubEdgeVertPos;
       std::vector<std::vector<int>> SubEdges;
-      GetSubFeatureMesh(SubMeshVertPos, SubMeshFaces, FeaturesPos,
+      Geo::MeshFeatures<ScalarType>::GetSubFeatureMesh(SubMeshVertPos, SubMeshFaces, FeaturesPos,
                         SubEdgeVertPos, SubEdges);
 
       std::vector<std::vector<int>> VVEdgeAdj;
@@ -442,6 +431,9 @@ public:
 
     if (VertSize != NULL) {
       assert(VertSizeFeat.size() == VertSizeNorm.size());
+      // FIX: values were appended, so a non-empty input vector ended up
+      // longer than the number of vertices
+      (*VertSize).clear();
       for (size_t i = 0; i < VertSizeFeat.size(); i++)
         (*VertSize).push_back(std::min(VertSizeFeat[i], VertSizeNorm[i]));
     }
@@ -465,6 +457,38 @@ public:
       std::cout << "There are Fearures:" << VertPairFeatures.size() << std::endl;
     return (RemeshSizeAggregated(VertPos, Faces, VertPairFeatures, MinSize,
                                  MaxSize, VertSize));
+  }
+
+  // ADAPTIVE: the aggregated field only reacts to nearby distinct features
+  // and to thin parts (normals almost opposite), so isolated sharp edges and
+  // curved regions stayed at MaxSize. This adds a curvature term: the
+  // distance at which the normal turns by CurvAngle (computed by
+  // RemeshSizeNormal with a low angle threshold). Sharp edges are included,
+  // since the normal turns immediately across them.
+  // The curvature term is bounded below by FeatureSize (the global,
+  // non-adaptive size), so the result is:
+  //  - finer than FeatureSize only where the aggregated field already says so
+  //  - FeatureSize near features and curvature
+  //  - up to MaxSize on flat regions
+  // VertSize must hold the aggregated field (same units, one per vertex).
+  static void
+  AdaptiveSizeField(const std::vector<Geo::Point3<ScalarType>> &VertPos,
+                    const std::vector<std::vector<int>> &Faces,
+                    const ScalarType &FeatureSize, const ScalarType &MinSize,
+                    const ScalarType &MaxSize, std::vector<ScalarType> &VertSize,
+                    ScalarType CurvAngle = 20, bool subSample = true) {
+    assert(VertSize.size() == VertPos.size());
+    assert(FeatureSize > 0);
+
+    std::vector<ScalarType> CurvSize;
+    RemeshSizeNormal(VertPos, Faces, MinSize, MaxSize, &CurvSize, CurvAngle,
+                     subSample);
+    assert(CurvSize.size() == VertPos.size());
+
+    for (size_t i = 0; i < VertSize.size(); i++) {
+      ScalarType CurvTarget = std::max(FeatureSize, CurvSize[i]);
+      VertSize[i] = std::min(VertSize[i], CurvTarget);
+    }
   }
 };
 } // namespace Geo

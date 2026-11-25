@@ -50,6 +50,12 @@ class SideCurvatureCondition : public PatchCondition<ScalarType> {
 public:
   ScalarType MaxSideAngle;
   bool smooth_paths;
+  // NEW: Taubin steps on the side polyline (end points fixed, no
+  // reprojection) before summing the turning angles: the path runs on the
+  // mesh edges and its residual zig-zag sums up (absolute angles), while the
+  // real turning of the side (e.g. around a hole) is kept; 0: not used, the
+  // default
+  int smooth_poly_steps;
 
   bool IsCorrect(const PatchManaging<ScalarType> &PatchM,
                  const int &IndexPatch) const override {
@@ -69,6 +75,12 @@ public:
       if (smooth_paths)
         Geo::SmoothReproject<ScalarType>(SidePoly, 10, TargetPos, TargetFaces,
                                          *TargetTriGrid, 0.5);
+      // NEW: remove the zig-zag along the mesh edges (Taubin: the Laplacian
+      // also straightened the real curvature of the short sides)
+      // if (smooth_poly_steps > 0)
+      //   SidePoly.SmoothLaplacian(smooth_poly_steps, (ScalarType)0.5);
+      if (smooth_poly_steps > 0)
+        SidePoly.SmoothTaubin(smooth_poly_steps);
 
       ScalarType TotA = SidePoly.TotAngle();
       if (fabs(TotA) > MaxSideAngle)
@@ -83,6 +95,9 @@ public:
             const std::vector<std::vector<int>> &_TargetFaces) {
     TargetPos = _TargetPos;
     TargetFaces = _TargetFaces;
+    // NEW: Init called again (a new run): free the previous grid
+    if (TargetTriGrid)
+      delete TargetTriGrid;
     TargetTriGrid = new Geo::TriangleSpatialIndex<ScalarType>();
     TargetTriGrid->Init(TargetPos, TargetFaces);
   }
@@ -96,6 +111,10 @@ public:
   SideCurvatureCondition(ScalarType _MaxSideAngle) {
     MaxSideAngle = _MaxSideAngle;
     smooth_paths = false;
+    smooth_poly_steps = 0;
+    // NEW: no grid until Init (the destructor deleted an uninitialized
+    // pointer when Init was never called)
+    TargetTriGrid = NULL;
   }
 };
 

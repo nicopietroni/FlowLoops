@@ -141,6 +141,7 @@ public:
                           std::vector<Geo::Point2<ScalarType> > &VertPos,
                           std::vector<std::vector<int> > &Connectivity)const
   {
+
     std::vector<int> Code;
     int NumSides=SidePos.size();
     if (NumSides!=4)return false;
@@ -156,17 +157,35 @@ public:
     }
 
     int Index0=firstIndex(Code);
+    // NEW (boundary rotation): sides of the patch before the rotation
+    std::vector<int> OrigCode = Code;
     std::rotate(Code.begin(), Code.begin() + Index0, Code.end());
     // std::cout<<"Searching for "<<Code[0]<<" "<<Code[1]<<" "<<
     //                              Code[2]<<" "<<Code[3]<<std::endl;
     if (LUT.count(Code)>0)
     {
+
       //Connectivity=LUT[Code];
       Connectivity=LUT.at(Code);
       //set the boundary nodes
       int NumB=0;
       for (size_t j=0;j<Code.size();j++)
         NumB+=Code[j];
+
+      // NEW (boundary rotation): in the LUT pattern the boundary vertices are
+      // 0..NumB-1 starting from the first corner of the ROTATED code, while
+      // the boundary positions below are taken from SidePos in the original
+      // order. Without this remap, when Index0 != 0 the corners of the
+      // pattern do not fall on the corners of the patch (pattern twisted).
+      int Offset = 0;
+      for (int j = 0; j < Index0; j++)
+        Offset += OrigCode[j];
+      if (Offset != 0) {
+        for (size_t j = 0; j < Connectivity.size(); j++)
+          for (size_t k = 0; k < Connectivity[j].size(); k++)
+            if (Connectivity[j][k] < NumB)
+              Connectivity[j][k] = (Connectivity[j][k] + Offset) % NumB;
+      }
       
       int VertNum=0;
       for (size_t j=0;j<Connectivity.size();j++)
@@ -202,7 +221,9 @@ public:
       //WriteOBJ("Test_LUT_0.obj",VertPos, Connectivity);
 
       getBorderVert(Connectivity,FixedVert);
+     
       Geo::SmoothLaplacianImplicit(VertPos,Connectivity,FixedVert);
+      
       // SmoothParam<ScalarType> SParam;
       // SParam.FixedVert=FixedVert;
       // SParam.NumIte=10;
@@ -213,6 +234,7 @@ public:
 
       //then invert faces orientation (it is like that in the LUT)
       InvertOrientation(Connectivity);
+
       return true;
     }
     else

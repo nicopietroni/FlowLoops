@@ -43,6 +43,7 @@
 #include "polygon3.h"
 #include "segment3.h"
 #include "quad2.h"
+#include "jacobian.h"
 
 namespace Geo {
 
@@ -215,35 +216,55 @@ ScalarType AspectRatioAlignPoly(const Quad3<ScalarType> &Q) {
   return (1 / (1 + Dist));
 }
 
+// template <class ScalarType>
+// ScalarType ScaledJacobianForCorner(const Quad3<ScalarType> &Q, int IndexV) {
+//   int IndexV0 = (IndexV + 3) % 4;
+//   int IndexV1 = IndexV;
+//   int IndexV2 = (IndexV + 1) % 4;
+//   Point3<ScalarType> p0 = Q.P(IndexV0);
+//   Point3<ScalarType> p1 = Q.P(IndexV1);
+//   Point3<ScalarType> p2 = Q.P(IndexV2);
+//   Point3<ScalarType> e1 = p1 - p0;
+//   Point3<ScalarType> e2 = p2 - p0;
+//   ScalarType norm1 = e1.Norm();
+//   ScalarType norm2 = e2.Norm();
+
+//   if (norm1 == 0 || norm2 == 0)
+//     return -1.0; // invalid geometry
+
+//   Point3<ScalarType> cross = Cross(e1, e2);
+//   ScalarType area = cross.Norm();
+//   return area / (norm1 * norm2); // == sin(angle) if planar
+// }
+
+// template <class ScalarType>
+// ScalarType ScaledJacobianQuad(const Quad3<ScalarType> &Q) {
+//   std::vector<ScalarType> scaledJs(4);
+//   for (int i = 0; i < 4; ++i) {
+//     scaledJs[i] = ScaledJacobianForCorner(Q, i);
+//     assert(scaledJs[i] <= 1);
+//   }
+//   return (*std::min_element(scaledJs.begin(), scaledJs.end()));
+// }
+
+// NEW (general scaled jacobian): quad version, calls the polygon one
 template <class ScalarType>
-ScalarType ScaledJacobianForCorner(const Quad3<ScalarType> &Q, int IndexV) {
-  int IndexV0 = (IndexV + 3) % 4;
-  int IndexV1 = IndexV;
-  int IndexV2 = (IndexV + 1) % 4;
-  Point3<ScalarType> p0 = Q.P(IndexV0);
-  Point3<ScalarType> p1 = Q.P(IndexV1);
-  Point3<ScalarType> p2 = Q.P(IndexV2);
-  Point3<ScalarType> e1 = p1 - p0;
-  Point3<ScalarType> e2 = p2 - p0;
-  ScalarType norm1 = e1.Norm();
-  ScalarType norm2 = e2.Norm();
-
-  if (norm1 == 0 || norm2 == 0)
-    return -1.0; // invalid geometry
-
-  Point3<ScalarType> cross = Cross(e1, e2);
-  ScalarType area = cross.Norm();
-  return area / (norm1 * norm2); // == sin(angle) if planar
+ScalarType ScaledJacobianForCorner(const Quad3<ScalarType> &Q, int IndexV,
+                                   Point3<ScalarType> RefN =
+                                       Point3<ScalarType>(0, 0, 0)) {
+  std::vector<Point3<ScalarType>> Poly = {Q.P(0), Q.P(1), Q.P(2), Q.P(3)};
+  if (RefN.Norm() == 0)
+    RefN = PolygonNormal(Poly);
+  return ScaledJacobianCorner(Poly, IndexV, RefN);
 }
 
+// NEW (general scaled jacobian): quad version, calls the polygon one
 template <class ScalarType>
-ScalarType ScaledJacobianQuad(const Quad3<ScalarType> &Q) {
-  std::vector<ScalarType> scaledJs(4);
-  for (int i = 0; i < 4; ++i) {
-    scaledJs[i] = ScaledJacobianForCorner(Q, i);
-    assert(scaledJs[i] <= 1);
-  }
-  return (*std::min_element(scaledJs.begin(), scaledJs.end()));
+ScalarType ScaledJacobianQuad(const Quad3<ScalarType> &Q,
+                              const Point3<ScalarType> &RefN =
+                                  Point3<ScalarType>(0, 0, 0)) {
+  std::vector<Point3<ScalarType>> Poly = {Q.P(0), Q.P(1), Q.P(2), Q.P(3)};
+  return ScaledJacobianPolygon(Poly, RefN);
 }
 
 template <class ScalarType>

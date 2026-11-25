@@ -30,6 +30,8 @@
 #include <cassert>
 #include <vector>
 #include <map>
+#include <set>
+#include <tuple>
 #include <iostream>
 #include "connectivity.h"
 
@@ -242,6 +244,22 @@ inline void GetSortedVertStar(const Pos3 &StartPos,
 
     std::vector<Pos3> PosFan;
     GetSortedFacesFaceFun(StartPos,Faces,NextF,NextE,PosFan,HasBorder);
+
+    // FIX: on a border fan GetSortedFacesFaceFun restarts from the border
+    // edge it reached, after FlipE, so that border edge is not in PosFan:
+    // the faces are all there but the vertex across that edge was missing
+    // from the star (3 neighbours instead of 4 on a border vertex of a grid).
+    // LinkConditions then worked with an incomplete link on border vertices
+    // and accepted collapses gluing two borders (edges with 3 faces).
+    // The missing vertex is added first, so the star stays sorted.
+    if ((HasBorder)&&(PosFan.size()>0))
+    {
+        Pos3 FirstB=PosFan[0];
+        FirstB.FlipE(Faces);   // back on the border edge of the first face
+        FirstB.FlipV(Faces);
+        VertFan.push_back(FirstB.V);
+    }
+
     for (size_t i=0;i<PosFan.size();i++)
     {
         assert(PosFan[i].V==StartPos.V);
@@ -326,6 +344,15 @@ inline void getBorderSequnces(const std::vector<std::vector<int> > &Faces,
     assert(MaxV>=0);
     std::vector<bool> Tested(MaxV+1,false);
 
+    // The walk is deterministic (the next position depends only on the
+    // current one): a position seen twice before coming back to the start
+    // means a cycle that does not contain the start, and the walk would
+    // never end (an edge in more than two faces or a degenerate face, where
+    // the face to face adjacency is not one to one). Such a walk is stopped
+    // the moment it repeats a position, and its sequence dropped; every
+    // walk that ends is exactly as before. (Before: bounds on the number of
+    // steps, 2 per border edge, and of turns, up to all the positions: a
+    // walk that never ends took up to steps x turns, minutes on a big patch)
     for (size_t i=0;i<NextF.size();i++)
         for (size_t j=0;j<NextF[i].size();j++)
         {
@@ -341,14 +368,41 @@ inline void getBorderSequnces(const std::vector<std::vector<int> > &Faces,
             BorderPos.resize(BorderPos.size()+1);
             Pos3 StartPos(i,j,VertIdx0);
             Pos3 CurrPos=StartPos;
+            bool Closed=true;
+            std::set<std::tuple<int,int,int> > Seen;
             do{
+                if (!Seen.insert(std::make_tuple(CurrPos.F,CurrPos.E,CurrPos.V)).second)
+                {
+                    Closed=false;
+                    break;
+                }
                 Tested[CurrPos.V]=true;
                 BorderPos.back().push_back(CurrPos);
-                //go next border
-                CurrPos.NextB(Faces,NextF,NextE);
+                //go next border (as Pos3::NextB, stopped on a repeated turn)
+                CurrPos.FlipE(Faces);
+                std::set<std::tuple<int,int,int> > Turned;
+                while (!CurrPos.IsBorder(NextF))
+                {
+                    if (!Turned.insert(std::make_tuple(CurrPos.F,CurrPos.E,CurrPos.V)).second)
+                    {
+                        Closed=false;
+                        break;
+                    }
+                    CurrPos.NextE(Faces,NextF,NextE);
+                }
+                if (!Closed)
+                    break;
                 //then on other side
                 CurrPos.FlipV(Faces);
             }while (CurrPos!=StartPos);
+            if (!Closed)
+            {
+                std::cout<<"WARNING: border walk that never ends (an edge in "
+                           "more than two faces or a degenerate face), sequence "
+                           "of "
+                         <<BorderPos.back().size()<<" dropped"<<std::endl;
+                BorderPos.pop_back();
+            }
         }
 }
 

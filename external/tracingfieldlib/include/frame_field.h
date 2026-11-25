@@ -27,6 +27,8 @@
 #ifndef FRAME_FIELD3
 #define FRAME_FIELD3
 
+#include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <vector>
 #include <stdio.h>
@@ -354,7 +356,11 @@ public:
         if (FixedDirs.size()==1)
         {
             int bestDirIndex=BestDirectionI(FixedDirs[0]);
-            Geo::Point3<ScalarType> bestDirVect=GetDirection(bestDirIndex);
+            // rotating to GetDirection(bestDirIndex) was a no-op:
+            // the target must be the constraint direction itself
+            // Geo::Point3<ScalarType> bestDirVect=GetDirection(bestDirIndex);
+            Geo::Point3<ScalarType> bestDirVect=FixedDirs[0];
+            bestDirVect.Normalize();
             //get the best in the first three
             if (bestDirIndex>=3){bestDirIndex-=3;bestDirVect=-bestDirVect;}
 

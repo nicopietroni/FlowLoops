@@ -24,8 +24,11 @@
  * //   Email: nico.pietroni@gmail.com
  */
 
-#ifndef POLYVECTOR_FIELD
-#define POLYVECTOR_FIELD
+//#ifndef POLYVECTOR_FIELD
+//#define POLYVECTOR_FIELD
+// Guard renamed: "POLYVECTOR_FIELD" clashes with directional::fieldTypeEnum::POLYVECTOR_FIELD
+#ifndef POLYVECTOR_FIELD_H
+#define POLYVECTOR_FIELD_H
 
 //#include <Eigen/Geometry>
 //#include <Eigen/SparseCholesky>
@@ -36,8 +39,7 @@
 //#include <igl/speye.h>
 // #include <igl/PI.h>
 // #include <iostream>
-// #include <directional/circumcircle.h>
-// #include <directional/complex_eigs.h>
+
 
 #include <Eigen/Sparse>
 #include <igl/local_basis.h>

@@ -28,6 +28,7 @@
 #define INITIALIZE_GRAPH
 
 #include "../cross_field.h"
+#include "../cross_field_functions.h"
 #include "../frame_field.h"
 #include "../point3.h"
 #include "best_rotation.h"
@@ -1025,13 +1026,78 @@ public:
     }
   }
 
+  // Multiplier of the cost of the arcs leaving each node (used only for the
+  // distances from the selected paths, see TracingGraph::useNodeMult, not
+  // for the tracing): 1 + Weight * Q for
+  // the nodes along the maximum curvature direction, 1 for the others, where
+  // Q is the curvature anisotropy of the cross field in [0.01,1]
+  // (InitCrossFieldQualityAsAnisotropy, clamped percentiles), so the
+  // multiplier is bounded in [1, 1 + Weight]. The spacing between the loops
+  // along the max curvature direction is longer where the curvature is
+  // anisotropic, so the candidates there get priority and the relaxation
+  // brings the loops closer.
+  static void SetCurvatureAnisotropyMultiplier(
+      TracingGraph<ScalarType> &TGraph,
+      const std::vector<Field::CrossF<ScalarType>> &CrossField,
+      const ScalarType Weight) {
+    ComputeCurvatureAnisotropyMultiplier(CrossField, TGraph.NumNodes(), Weight,
+                                         TGraph.NodeMult);
+  }
+
+  // the per node multiplier (see SetCurvatureAnisotropyMultiplier); empty if
+  // Weight <= 0. MinDir: the nodes along the min curvature direction (the
+  // smallest |K|) instead of the max one. BothDirs: the nodes of both
+  // directions (MinDir is then ignored)
+  static void ComputeCurvatureAnisotropyMultiplier(
+      const std::vector<Field::CrossF<ScalarType>> &CrossField,
+      const size_t NumNodes, const ScalarType Weight,
+      std::vector<ScalarType> &NodeMult, const bool MinDir = false,
+      const bool BothDirs = false) {
+    NodeMult.clear();
+    if (Weight <= 0)
+      return;
+    // anisotropy recomputed on a copy (the vertex quality is not always
+    // updated when the field is interpolated from the faces)
+    std::vector<Field::CrossF<ScalarType>> Crosses = CrossField;
+    InitCrossFieldQualityAsAnisotropy<ScalarType>(Crosses);
+    NodeMult.assign(NumNodes, 1);
+    for (size_t i = 0; i < Crosses.size(); i++) {
+      ScalarType Q = std::min((ScalarType)1, std::max((ScalarType)0, Crosses[i].Q));
+      // OLD (nodes along the min direction)
+      // int MinAxis =
+      //     (std::fabs(Crosses[i].K[0]) <= std::fabs(Crosses[i].K[1])) ? 0 : 1;
+      // ...
+      //   if ((int)(d % 2) == MinAxis)
+      //     TGraph.NodeMult[IndexN] = 1 + Weight * Q;
+      // NEW: the distance of a node grows only through the arcs of its own
+      // direction family (an arc keeps the direction, drifting at most
+      // maxAngle sideways), so the spacing between two loops along the max
+      // curvature direction is measured by the arcs of the max direction
+      // nodes: those are the ones to weight
+      int MaxAxis =
+          (std::fabs(Crosses[i].K[0]) > std::fabs(Crosses[i].K[1])) ? 0 : 1;
+      if (MinDir)
+        MaxAxis = 1 - MaxAxis;
+      for (size_t d = 0; d < 4; d++) {
+        int IndexN = Field::CrossFieldGraph::NodeOfElemDir(i, d);
+        if (IndexN < 0 || IndexN >= (int)NodeMult.size())
+          continue;
+        if (BothDirs || ((int)(d % 2) == MaxAxis))
+          NodeMult[IndexN] = 1 + Weight * Q;
+      }
+    }
+  }
+
+  // curvature_aniso_weight > 0: arc costs weighted by the curvature
+  // anisotropy (SetCurvatureAnisotropyMultiplier); default 0, not used
   static void InitFromVertCrossField(
       TracingGraph<ScalarType> &TGraph,
       const std::vector<Geo::Point3<ScalarType>> &VertPos,
       const std::vector<std::vector<int>> &Faces,
       const std::vector<Field::CrossF<ScalarType>> &CrossField,
       const ScalarType &drift_penalty = 100, const ScalarType maxAngle = 45,
-      const size_t diffuse_step = 1, bool symmetrize = true) {
+      const size_t diffuse_step = 1, bool symmetrize = true,
+      const ScalarType curvature_aniso_weight = 0) {
     TGraph.Clear();
     assert(VertPos.size() == CrossField.size());
     std::vector<std::vector<int>> Adjacency;
@@ -1063,6 +1129,9 @@ public:
     TGraph.InitTracing();
     MakeSymmetricCrossFieldGraph(TGraph);
     TGraph.SortAllNeigh();
+
+    SetCurvatureAnisotropyMultiplier(TGraph, CrossField,
+                                     curvature_aniso_weight);
   }
 
   static void InitFromPolyFrameField(

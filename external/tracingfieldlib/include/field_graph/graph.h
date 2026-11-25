@@ -63,9 +63,9 @@ enum NType {
   // nodes that are orthogonal to a dart
   DartOrthoDomain,
   // internal nodes
-  Internal,
+  Internal
   // nodes to jump from one side to another of a feature
-  JumpNodes
+  //JumpNodes
 };
 
 enum GraphType { GT_CrossField, GT_FrameField };
@@ -132,6 +132,8 @@ template <class ScalarType> class TracingGraph {
     bool Direct;
     // Visible or not
     bool Visible;
+    //the modifier of the weight used only when enabled
+    ScalarType ModW;
 
     NeighInfo() {
       N = -1;
@@ -139,6 +141,7 @@ template <class ScalarType> class TracingGraph {
       Enabled = false;
       Direct = false;
       Visible = false;
+      ModW = 1;
     }
 
     inline bool operator==(const NeighInfo &N1) const {
@@ -164,6 +167,7 @@ template <class ScalarType> class TracingGraph {
       Enabled = _Enabled;
       Direct = _Direct;
       Visible = _Visible;
+      ModW = 1;
     }
   };
 
@@ -183,6 +187,8 @@ template <class ScalarType> class TracingGraph {
 
 
 public:
+
+  bool useModifiedWeight=false;
   //std::vector<Geo::Point3<ScalarType> > NodePos;
 
   std::vector<std::vector<NeighInfo> > N;
@@ -374,7 +380,29 @@ public:
     assert(IndexN0 < (int)N.size());
     assert(LocalIdx >= 0);
     assert(LocalIdx < (int)N[IndexN0].size());
-    return (N[IndexN0][LocalIdx].W);
+    // OLD (without the node multiplier)
+    // if (!useModifiedWeight)
+    //   return (N[IndexN0][LocalIdx].W);
+    //
+    // return (N[IndexN0][LocalIdx].W * N[IndexN0][LocalIdx].ModW);
+    ScalarType W = N[IndexN0][LocalIdx].W;
+    if (useModifiedWeight)
+      W *= N[IndexN0][LocalIdx].ModW;
+    return (W * NodeMultiplier(IndexN0));
+  }
+
+  // multiplier of the cost of all the arcs leaving a node (e.g. curvature
+  // anisotropy, see InitFromVertCrossField); empty: 1 for every node.
+  // Used only when useNodeMult is true (set only while computing the
+  // distances from the selected paths, never while tracing)
+  std::vector<ScalarType> NodeMult;
+  bool useNodeMult = false;
+
+  ScalarType NodeMultiplier(const int &IndexN0) const {
+    if ((!useNodeMult) || NodeMult.empty())
+      return 1;
+    assert(IndexN0 < (int)NodeMult.size());
+    return NodeMult[IndexN0];
   }
 
   int NodeLink(const int &IndexN0, const int &LocalIdx) const {
@@ -459,6 +487,18 @@ public:
       if (NodeType(i) != TypeNode)
         continue;
       IdxNode.push_back(i);
+    }
+  }
+
+  void GetNodeTypeFrom(const NType &TypeNode, 
+                      const std::vector<int> &SubsetIdx,
+                      std::vector<int> &IdxNodeFrom) const {
+    IdxNodeFrom.clear();
+    for (size_t i = 0; i < SubsetIdx.size(); i++) {
+      int IndexN = SubsetIdx[i];
+      if (NodeType(IndexN) != TypeNode)
+        continue;
+      IdxNodeFrom.push_back(IndexN);
     }
   }
 
@@ -570,6 +610,7 @@ public:
 
   void Clear() {
     EnabledN.clear();
+    NodeMult.clear();
     // EnabledA.clear();
     N.clear();
 

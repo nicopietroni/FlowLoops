@@ -53,6 +53,7 @@
 #include "patch_functions.h"
 #include <UV_param.h>
 #include <pos3.h>
+#include <limits>
 #include <unordered_map>
 #define PARALLEL_PATCH_UPDATE
 
@@ -139,6 +140,9 @@ public:
   double TimeUpdateSubPatches[2] = {0, 0};
 
 private:
+  // NEW (speed): explored faces of FFConnectedComponenentElements
+  std::vector<int> ExploredStamp;
+  int CurrExploredStamp = 0;
   // adjacency on the mesh
   std::vector<std::vector<int>> NextF;
   std::vector<std::vector<int>> NextE;
@@ -848,10 +852,21 @@ private:
 
     // find partitions
     // std::set<int> Explored;
-    std::unordered_set<int> Explored;
+    // OLD (hash set of the explored faces)
+    // std::unordered_set<int> Explored;
+    // NEW (speed): a stamp per face of the mesh, kept between the calls (the
+    // same visit, the same components in the same order)
+    if (ExploredStamp.size() != Faces.size())
+      ExploredStamp.assign(Faces.size(), 0);
+    CurrExploredStamp++;
+    if (CurrExploredStamp == std::numeric_limits<int>::max()) {
+      std::fill(ExploredStamp.begin(), ExploredStamp.end(), 0);
+      CurrExploredStamp = 1;
+    }
+    auto IsExplored = [&](int F) { return ExploredStamp[F] == CurrExploredStamp; };
 
     for (size_t i = 0; i < IndexF.size(); i++) {
-      if (Explored.count(IndexF[i]) > 0)
+      if (IsExplored(IndexF[i]))
         continue;
 
       ComponentsF.resize(ComponentsF.size() + 1);
@@ -862,10 +877,10 @@ private:
         int CurrF = StackF.back();
         StackF.pop_back();
 
-        if (Explored.count(CurrF) > 0)
+        if (IsExplored(CurrF))
           continue;
 
-        Explored.insert(CurrF);
+        ExploredStamp[CurrF] = CurrExploredStamp;
 
         ComponentsF.back().push_back(CurrF);
 
@@ -894,7 +909,7 @@ private:
           if (PData.PathsEdges2.count(Key) > 0)
             continue;
 
-          bool has_to_diffuse = (Explored.count(AdjF) == 0);
+          bool has_to_diffuse = !IsExplored(AdjF);
           if (has_to_diffuse) {
             StackF.push_back(AdjF);
           }
@@ -985,37 +1000,45 @@ private:
     std::vector<std::pair<int, int>> SplitEdges(SplitEdgeSet.begin(),
                                                 SplitEdgeSet.end());
 
-    // std::map<Geo::Point3<ScalarType>, int> PosToIDX;
-    std::unordered_map<Geo::Point3<ScalarType>, int,
-                       Geo::Point3Hash<ScalarType>,
-                       Geo::Point3Equal<ScalarType>>
-        PosToIDX;
-
-    for (size_t i = 0; i < PData.SubPatchVertPos[IndexPatch].size(); i++) {
-      Geo::Point3<ScalarType> Pos = PData.SubPatchVertPos[IndexPatch][i];
-      PosToIDX[Pos] = PData.SubPatchVertToOriginal[IndexPatch][i];
-    }
+    // OLD (mapping by position: a hash of all the positions of the patch,
+    // ambiguous where two vertices share a position)
+    // std::unordered_map<Geo::Point3<ScalarType>, int,
+    //                    Geo::Point3Hash<ScalarType>,
+    //                    Geo::Point3Equal<ScalarType>>
+    //     PosToIDX;
+    // for (size_t i = 0; i < PData.SubPatchVertPos[IndexPatch].size(); i++) {
+    //   Geo::Point3<ScalarType> Pos = PData.SubPatchVertPos[IndexPatch][i];
+    //   PosToIDX[Pos] = PData.SubPatchVertToOriginal[IndexPatch][i];
+    // }
+    // NEW (mapping by index): the splits only append copies of vertices and
+    // say which vertex each one copies, so the original vertex of a copy is
+    // the one of its source
+    std::vector<int> SourceV;
 
     bool has_changed = false;
     if (SplitEdges.size() > 0) {
       // split the mesh
       SplitMeshFromEdges(PData.SubPatchVertPos[IndexPatch],
                          PData.SubPatchFaces[IndexPatch], NextFPatch,
-                         NextEPatch, SplitEdges);
+                         NextEPatch, SplitEdges, &SourceV);
       has_changed = true;
       // split non manif edges (might happens in case of original borders)
       getFFAdjacency(PData.SubPatchFaces[IndexPatch], NextFPatch, NextEPatch);
     }
     has_changed |= SplitNonManifoldBorderV(PData.SubPatchVertPos[IndexPatch],
                                            PData.SubPatchFaces[IndexPatch],
-                                           NextFPatch, NextEPatch);
+                                           NextFPatch, NextEPatch, &SourceV);
     if (has_changed) {
-      // restore the right mapping
-      PData.SubPatchVertToOriginal[IndexPatch].clear();
-      for (size_t i = 0; i < PData.SubPatchVertPos[IndexPatch].size(); i++) {
-        Geo::Point3<ScalarType> Pos = PData.SubPatchVertPos[IndexPatch][i];
-        assert(PosToIDX.count(Pos) > 0);
-        PData.SubPatchVertToOriginal[IndexPatch].push_back(PosToIDX[Pos]);
+      // restore the right mapping (a source always comes before its copy)
+      std::vector<int> &VToOr = PData.SubPatchVertToOriginal[IndexPatch];
+      size_t NumOld = VToOr.size();
+      assert(NumOld + SourceV.size() ==
+             PData.SubPatchVertPos[IndexPatch].size());
+      for (size_t k = 0; k < SourceV.size(); k++) {
+        assert(SourceV[k] >= 0);
+        assert(SourceV[k] < (int)(NumOld + k));
+        int OrV = VToOr[SourceV[k]];
+        VToOr.push_back(OrV);
       }
     }
     auto t2 = std::chrono::high_resolution_clock::now();
@@ -1028,7 +1051,22 @@ private:
 
     assert(IndexPatch >= 0);
     // std::map<int, int> VertMap;
-    std::unordered_map<int, int> VertMap;
+    // OLD (hash map original vertex -> patch vertex)
+    // std::unordered_map<int, int> VertMap;
+    // NEW (speed): per thread arrays over the original vertices, with a
+    // stamp (the patches are updated on several threads)
+    thread_local std::vector<int> VertMapIdx, VertMapStamp;
+    thread_local int VertMapCurr = 0;
+    if (VertMapStamp.size() != VertPos.size()) {
+      VertMapStamp.assign(VertPos.size(), 0);
+      VertMapIdx.assign(VertPos.size(), -1);
+      VertMapCurr = 0;
+    }
+    VertMapCurr++;
+    if (VertMapCurr == std::numeric_limits<int>::max()) {
+      std::fill(VertMapStamp.begin(), VertMapStamp.end(), 0);
+      VertMapCurr = 1;
+    }
 
     assert(IndexPatch < (int)PData.SubPatchVertPos.size());
     assert(IndexPatch < (int)PData.SubPatchFaces.size());
@@ -1060,14 +1098,15 @@ private:
         int IndexOrV = Faces[IndexOrFace][j];
         int IndexNewV = -1;
 
-        if (VertMap.count(IndexOrV) > 0)
-          IndexNewV = VertMap[IndexOrV];
+        if (VertMapStamp[IndexOrV] == VertMapCurr)
+          IndexNewV = VertMapIdx[IndexOrV];
         else {
           PData.SubPatchVertPos[IndexPatch].push_back(VertPos[IndexOrV]);
           PData.SubPatchVertToOriginal[IndexPatch].push_back(IndexOrV);
           IndexNewV = PData.SubPatchVertPos[IndexPatch].size() - 1;
 
-          VertMap[IndexOrV] = IndexNewV;
+          VertMapStamp[IndexOrV] = VertMapCurr;
+          VertMapIdx[IndexOrV] = IndexNewV;
         }
         PData.SubPatchFaces[IndexPatch].back()[j] = IndexNewV;
       }

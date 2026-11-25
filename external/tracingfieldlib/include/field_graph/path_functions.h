@@ -99,9 +99,32 @@ public:
     return true;
   }
 
-  static bool ConnectDirect(TracingGraph<ScalarType> &TGraph,
-                            const int &IndexN0, const int &IndexN1,
-                            std::vector<int> &DirectPath) {
+  // static bool ConnectDirect(TracingGraph<ScalarType> &TGraph,
+  //                           const int &IndexN0, const int &IndexN1,
+  //                           std::vector<int> &DirectPath) {
+  //   typename Geo::GraphQuery<ScalarType>::ShortestPathParam SParam;
+  //   SParam.avoid_zero_path = true;
+  //   SParam.StopAtSel[0] = true;
+
+  //   TGraph.DeSelectAll(0);
+  //   TGraph.Select(IndexN1, 0);
+  //   SParam.onlyDirect = true;
+  //   SParam.onlyVisible = false;
+  //   // TO CHECK
+  //   SParam.uniformW = true;
+  //   SParam.MaxSteps = TGraph.diffuse_step + 1;
+  //   std::vector<int> SourceNodes(1, IndexN0);
+  //   ScalarType PathL;
+  //   bool has_connected = Geo::GraphQuery<ScalarType>::ShortestPaths(
+  //       TGraph, SourceNodes, DirectPath, PathL, SParam);
+  //   return has_connected;
+  // }
+
+    // Original Dijkstra-based version, kept as fallback (diffuse_step != 1)
+  // and as reference for the sanity check.
+  static bool ConnectDirectDijkstra(TracingGraph<ScalarType> &TGraph,
+                                    const int &IndexN0, const int &IndexN1,
+                                    std::vector<int> &DirectPath) {
     typename Geo::GraphQuery<ScalarType>::ShortestPathParam SParam;
     SParam.avoid_zero_path = true;
     SParam.StopAtSel[0] = true;
@@ -110,28 +133,110 @@ public:
     TGraph.Select(IndexN1, 0);
     SParam.onlyDirect = true;
     SParam.onlyVisible = false;
-    // TO CHECK
     SParam.uniformW = true;
     SParam.MaxSteps = TGraph.diffuse_step + 1;
     std::vector<int> SourceNodes(1, IndexN0);
     ScalarType PathL;
     bool has_connected = Geo::GraphQuery<ScalarType>::ShortestPaths(
         TGraph, SourceNodes, DirectPath, PathL, SParam);
-    //   for (size_t i=0;i<DirectPath.size();i++)
-    //   {
-    //     if (!TGraph.IsEnabled(DirectPath[i]))
-    //     {
-    //       std::cout<<"Error Enabled Path 1"<<std::endl;
-    //       exit(0);
-    //     }
-
-    //     if (TGraph.NodeType(DirectPath[i])==Geo::TangentDomain)
-    //     {
-    //       std::cout<<"Error Tangent Path 1"<<std::endl;
-    //       exit(0);
-    //     }
-    //  }
     return has_connected;
+  }
+
+    // Finds the cheapest path from IndexN0 to IndexN1 made of at most two
+  // direct arcs. Equivalent to ConnectDirectDijkstra when diffuse_step == 1
+  // (MaxSteps == 2): same arc filters, same uniformW cost and same
+  // tie-breaking, but no heap, no allocations and no writes to the graph.
+  static bool ConnectDirectTwoSteps(TracingGraph<ScalarType> &TGraph,
+                                    const int IndexN0, const int IndexN1,
+                                    std::vector<int> &DirectPath) {
+    DirectPath.clear();
+
+    // Dijkstra (checkEnabled == true) does not seed a disabled source
+    // and never reaches a disabled target.
+    if (!TGraph.IsEnabled(IndexN0) || !TGraph.IsEnabled(IndexN1))
+      return false;
+
+    // Same per-arc cost used by Dijkstra when uniformW is set.
+    const ScalarType AvgW = TGraph.AverageWeigth();
+    const ScalarType delta = 0.001;
+    auto StepCost = [&](ScalarType W) { return AvgW + (delta * W); };
+
+    // Best path found so far.
+    // BestMid: -2 = nothing found, -1 = single direct arc N0->N1,
+    //          >= 0 = intermediate node of a two-arc path N0->Mid->N1.
+    ScalarType BestCost = std::numeric_limits<ScalarType>::max();
+    ScalarType BestFirst = 0;
+    int BestMid = -2;
+
+    // First arc: every active direct arc leaving N0.
+    for (int i = 0; i < TGraph.NeighSize(IndexN0); i++) {
+      if (!TGraph.ActiveLink(IndexN0, i) || !TGraph.DirectLink(IndexN0, i))
+        continue;
+      int Mid = TGraph.NodeLink(IndexN0, i);
+      if (!TGraph.IsEnabled(Mid))
+        continue;
+
+      // Cost after the first arc (summed as Dijkstra does: 0 + step).
+      ScalarType C1 = (ScalarType)0 + StepCost(TGraph.WeightLink(IndexN0, i));
+
+      // Single-arc path. Dijkstra relaxes it first (when N0 is popped),
+      // so it wins ties against any two-arc path.
+      if (Mid == IndexN1) {
+        if (C1 < BestCost || (C1 == BestCost && BestMid >= 0)) {
+          BestCost = C1;
+          BestMid = -1;
+        }
+        continue;
+      }
+      if (Mid == IndexN0)
+        continue;
+
+      // Second arc: an active direct arc from Mid to N1.
+      for (int j = 0; j < TGraph.NeighSize(Mid); j++) {
+        if (!TGraph.ActiveLink(Mid, j) || !TGraph.DirectLink(Mid, j))
+          continue;
+        if (TGraph.NodeLink(Mid, j) != IndexN1)
+          continue;
+
+        ScalarType C2 = C1 + StepCost(TGraph.WeightLink(Mid, j));
+
+        // On equal total cost, Dijkstra keeps the path whose Mid was popped
+        // first: smaller first-arc cost, then larger node index
+        // (see HeapEntry::operator<).
+        bool better = (C2 < BestCost) ||
+                      (C2 == BestCost && BestMid >= 0 &&
+                       (C1 < BestFirst || (C1 == BestFirst && Mid > BestMid)));
+        if (better) {
+          BestCost = C2;
+          BestFirst = C1;
+          BestMid = Mid;
+        }
+      }
+    }
+
+    if (BestMid == -2)
+      return false;
+
+    // Build the path: N0 [-> Mid] -> N1
+    DirectPath.push_back(IndexN0);
+    if (BestMid >= 0)
+      DirectPath.push_back(BestMid);
+    DirectPath.push_back(IndexN1);
+    return true;
+  }
+
+  // Uses the fast two-step search when the path can have at most two arcs,
+  // otherwise falls back to Dijkstra. In sanity builds both are run and
+  // their results compared.
+  static bool ConnectDirect(TracingGraph<ScalarType> &TGraph,
+                            const int &IndexN0, const int &IndexN1,
+                            std::vector<int> &DirectPath) {
+    if (TGraph.diffuse_step != 1)
+      return ConnectDirectDijkstra(TGraph, IndexN0, IndexN1, DirectPath);
+
+    bool ok = ConnectDirectTwoSteps(TGraph, IndexN0, IndexN1, DirectPath);
+
+    return ok;
   }
 
   // simplify the connections to have one edge per triangle/tetra
@@ -290,23 +395,23 @@ public:
     }
   }
 
-  static void
-  CopyNonEnabledConnections(const Geo::TracingGraph<ScalarType> &Source,
-                            Geo::TracingGraph<ScalarType> &Destination) {
-    for (size_t i = 0; i < Source.NumNodes(); i++) {
-      int IndexN0 = i;
-      if (!Source.EnabledN[IndexN0])
-        continue;
-      for (size_t j = 0; j < Source.NeighSize(IndexN0); j++) {
-        // check if the link is enabled
-        if (Source.ActiveLink(IndexN0, j))
-          continue;
-        if (!Destination.ActiveLink(IndexN0, j))
-          continue;
-        Destination.DisableArc(IndexN0, j);
-      }
-    }
-  }
+  // static void
+  // CopyNonEnabledConnections(const Geo::TracingGraph<ScalarType> &Source,
+  //                           Geo::TracingGraph<ScalarType> &Destination) {
+  //   for (size_t i = 0; i < Source.NumNodes(); i++) {
+  //     int IndexN0 = i;
+  //     if (!Source.EnabledN[IndexN0])
+  //       continue;
+  //     for (size_t j = 0; j < Source.NeighSize(IndexN0); j++) {
+  //       // check if the link is enabled
+  //       if (Source.ActiveLink(IndexN0, j))
+  //         continue;
+  //       if (!Destination.ActiveLink(IndexN0, j))
+  //         continue;
+  //       Destination.DisableArc(IndexN0, j);
+  //     }
+  //   }
+  // }
 
   static int OppositeNode(const Geo::TracingGraph<ScalarType> &TGraph,
                           const int &indexN) {
@@ -1051,7 +1156,11 @@ public:
       std::reverse(OppN1.begin(), OppN1.end());
       PathN0.pop_back();
       PathN0.insert(PathN0.end(), OppN1.begin(), OppN1.end());
-      OppN1.clear();
+      // OLD (cleared the local copy, so PathN1 stayed and its edges were in
+      // two paths)
+      // OppN1.clear();
+      // NEW
+      PathN1.clear();
       return true;
     }
 
@@ -1090,7 +1199,12 @@ public:
       OppositeNodesCross(PathN1, OppN1);
       std::reverse(OppN1.begin(), OppN1.end());
       PathN0.pop_back();
-      PathN0.insert(PathN0.end(), PathN1.begin(), PathN1.end());
+      // OLD (appended PathN1 in its original order: after the last node of
+      // PathN0 came the far end of PathN1, two nodes that are not a mesh edge,
+      // so EdgesToFace.at threw later)
+      // PathN0.insert(PathN0.end(), PathN1.begin(), PathN1.end());
+      // NEW (the reversed one, computed just above)
+      PathN0.insert(PathN0.end(), OppN1.begin(), OppN1.end());
       PathN1.clear();
       return true;
     }

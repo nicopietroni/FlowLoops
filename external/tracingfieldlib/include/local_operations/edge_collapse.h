@@ -622,6 +622,60 @@ public:
     return (CurrE <= this->max_error);
   }
 
+  // FIX (robustness): checked on the VF adjacency, independently of the FF
+  // based link condition. On Thingi10K 90247 a collapse passed the FF link
+  // condition and created an edge with 3 faces; the fan walks on the
+  // corrupted FF adjacency then grew without end (100+ GB). Here the result
+  // of the collapse V1 -> V0 is checked directly: every edge (V0,X) must
+  // have at most 2 faces and no face may become a duplicate of another one.
+  bool ResultFeasibleVF() const {
+    int IndexV0 = this->pos.V;
+    int IndexV1 = this->pos.VFlip(this->Faces);
+    // faces on the edge (V0,X) after the collapse, for every X
+    std::map<int, int> EdgeCount;
+    // the other two vertices of the faces of V0 that survive
+    std::set<std::pair<int, int>> KeptV0;
+    for (size_t i = 0; i < this->VF[IndexV0].size(); i++) {
+      int IndexF = this->VF[IndexV0][i];
+      if (this->DeletedF[IndexF])
+        continue;
+      if (WhichVert(this->Faces[IndexF], IndexV1) >= 0)
+        continue; // on the collapsed edge: deleted
+      std::vector<int> Other;
+      for (size_t j = 0; j < this->Faces[IndexF].size(); j++)
+        if (this->Faces[IndexF][j] != IndexV0) {
+          Other.push_back(this->Faces[IndexF][j]);
+          EdgeCount[this->Faces[IndexF][j]]++;
+        }
+      assert(Other.size() == 2);
+      KeptV0.insert(std::pair<int, int>(std::min(Other[0], Other[1]),
+                                        std::max(Other[0], Other[1])));
+    }
+    for (size_t i = 0; i < this->VF[IndexV1].size(); i++) {
+      int IndexF = this->VF[IndexV1][i];
+      if (this->DeletedF[IndexF])
+        continue;
+      if (WhichVert(this->Faces[IndexF], IndexV0) >= 0)
+        continue; // on the collapsed edge: deleted
+      std::vector<int> Other;
+      for (size_t j = 0; j < this->Faces[IndexF].size(); j++)
+        if (this->Faces[IndexF][j] != IndexV1) {
+          Other.push_back(this->Faces[IndexF][j]);
+          EdgeCount[this->Faces[IndexF][j]]++;
+        }
+      assert(Other.size() == 2);
+      // the face would become identical to a face of V0
+      if (KeptV0.count(std::pair<int, int>(std::min(Other[0], Other[1]),
+                                           std::max(Other[0], Other[1]))) > 0)
+        return false;
+    }
+    std::map<int, int>::const_iterator IteE;
+    for (IteE = EdgeCount.begin(); IteE != EdgeCount.end(); IteE++)
+      if ((*IteE).second > 2)
+        return false;
+    return true;
+  }
+
   bool FeatureFeasible() const override {
     // two corners
     if ((this->isCornerV0) && (this->isCornerV1))
@@ -651,6 +705,9 @@ public:
       return false;
     if (!TriangleEdgeCollapse<ScalarType>::LinkConditions(
             V0, V1, V01, IsBorderE, IsBorderV0, IsBorderV1))
+      return false;
+    // FIX (robustness): independent check of the result on VF
+    if (!ResultFeasibleVF())
       return false;
 
     // if (!TriangleEdgeCollapse<ScalarType>::FeasibleVF(

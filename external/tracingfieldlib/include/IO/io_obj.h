@@ -37,6 +37,7 @@
 #include <sstream>
 #include <point3.h>
 #include <IO/file_path_functions.h>
+#include <triangle3.h>
 
 inline void parseFaceLine(const std::string& line, std::vector<int>& vertexIndices) 
 {
@@ -442,15 +443,19 @@ bool WriteOBJWithVertColor(const std::string &meshFile,
 
 
 template <class ScalarType>
+// PRECISION: significant digits of the coordinates. 9 is enough to write any
+// float exactly (STL inputs are float) and keeps files much smaller than 17.
 bool WriteOBJ(std::string meshFile,
               const std::vector<std::vector<ScalarType > > &VertPos,
-              const std::vector<std::vector<int> > &Connectivity)
+              const std::vector<std::vector<int> > &Connectivity,
+              const int precision=9)
 {
     //    std::cout<<"Loading:"<<meshFile.c_str()<<std::endl;
     std::ofstream fout(meshFile.c_str());
     if(!fout) return false;
 
-    fout<<std::setprecision(17);
+    // fout<<std::setprecision(17);
+    fout<<std::setprecision(precision);
 
     for (size_t i=0;i<VertPos.size();i++)
     {
@@ -469,8 +474,13 @@ bool WriteOBJ(std::string meshFile,
             KeyElem=std::string("l");
 
         fout<<KeyElem.c_str();
+        // FIX: without UVs the faces referenced texture coordinates ("f 1/1")
+        // that are not in the file; plain vertex indices are written
+        // (smaller files, valid OBJ). The version with UVs below keeps v/vt.
+        // for (size_t j=0;j<Connectivity[i].size();j++)
+        //     fout<<" "<<Connectivity[i][j]+1<<"/"<<Connectivity[i][j]+1;
         for (size_t j=0;j<Connectivity[i].size();j++)
-            fout<<" "<<Connectivity[i][j]+1<<"/"<<Connectivity[i][j]+1;
+            fout<<" "<<Connectivity[i][j]+1;
         fout<<"\n";
     }
 
@@ -483,7 +493,8 @@ bool WriteOBJ(std::string meshFile,
               const std::vector<std::vector<ScalarType > > &VertPos,
               const std::vector<std::vector<ScalarType > > &VertUVs,
               const std::vector<std::vector<int> > &Connectivity,
-              const std::string pathTxt)
+              const std::string pathTxt,
+              const int precision=9) // PRECISION
 {
     //    std::cout<<"Loading:"<<meshFile.c_str()<<std::endl;
     std::ofstream fout(meshFile.c_str());
@@ -495,7 +506,8 @@ bool WriteOBJ(std::string meshFile,
     if (!pathTxt.empty())
         fout<<"mtllib "<<MTLFile.c_str()<<"\n";
 
-    fout<<std::setprecision(17);
+    // fout<<std::setprecision(17);
+    fout<<std::setprecision(precision);
 
     for (size_t i=0;i<VertPos.size();i++)
     {
@@ -505,7 +517,9 @@ bool WriteOBJ(std::string meshFile,
 
     for (size_t i=0;i<VertUVs.size();i++)
     {
-        assert(VertUVs[i].size()==1);
+        // FIX: UVs have 2 coordinates (the assert failed in debug builds)
+        // assert(VertUVs[i].size()==1);
+        assert(VertUVs[i].size()==2);
         fout<<"vt "<<VertUVs[i][0]<<" "<<VertUVs[i][1]<<"\n";
     }
 
@@ -546,7 +560,8 @@ bool WriteOBJ(std::string meshFile,
 template <class ScalarType>
 bool WriteOBJ(std::string meshFile,
               const std::vector<Geo::Point3<ScalarType> > &VertPos,
-              const std::vector<std::vector<int> > &Connectivity)
+              const std::vector<std::vector<int> > &Connectivity,
+              const int precision=9) // PRECISION
 {
     std::vector<std::vector<ScalarType > > VertPosVect(VertPos.size());
     for (size_t i=0;i<VertPos.size();i++)
@@ -555,7 +570,18 @@ bool WriteOBJ(std::string meshFile,
         VertPosVect[i].push_back(VertPos[i].Y);
         VertPosVect[i].push_back(VertPos[i].Z);
     }
-    return (WriteOBJ(meshFile,VertPosVect,Connectivity));
+    // return (WriteOBJ(meshFile,VertPosVect,Connectivity));
+    return (WriteOBJ(meshFile,VertPosVect,Connectivity,precision));
+}
+
+template <class ScalarType>
+bool WriteOBJ(std::string meshFile,
+              const Geo::Point3<ScalarType> &VertPos)
+{
+    std::vector<std::vector<int> > Connectivity;
+    std::vector<Geo::Point3<ScalarType> > VertPosV(1);
+    VertPosV[0] = VertPos;
+    return (WriteOBJ(meshFile,VertPosV,Connectivity));
 }
 
 template <class ScalarType>
@@ -587,7 +613,8 @@ bool WriteOBJ(std::string meshFile,
               const std::vector<Geo::Point3<ScalarType> > &VertPos,
               const std::vector<Geo::Point2<ScalarType> > &UVPos,
               const std::vector<std::vector<int> > &Connectivity,
-              const std::string pathTxt=std::string())
+              const std::string pathTxt=std::string(),
+              const int precision=9) // PRECISION
 {
     assert(UVPos.size()==VertPos.size());
     std::vector<std::vector<ScalarType > > VertPosVect(VertPos.size());
@@ -603,7 +630,8 @@ bool WriteOBJ(std::string meshFile,
         VertUVVect[i].push_back(UVPos[i].X);
         VertUVVect[i].push_back(UVPos[i].Y);
     }
-    return (WriteOBJ(meshFile,VertPosVect,VertUVVect,Connectivity,pathTxt));
+    // return (WriteOBJ(meshFile,VertPosVect,VertUVVect,Connectivity,pathTxt));
+    return (WriteOBJ(meshFile,VertPosVect,VertUVVect,Connectivity,pathTxt,precision));
 }
 
 template <class ScalarType>
@@ -623,6 +651,29 @@ bool WriteOBJ(std::string meshFile,
 
 template <class ScalarType>
 bool WriteOBJ(std::string meshFile,
+              const std::vector<Geo::Point3<ScalarType> > &VertPos)
+{
+     std::vector<std::vector<int> > Connectivity;
+    return (WriteOBJ(meshFile,VertPos,Connectivity));
+}
+
+template <class ScalarType>
+bool WriteOBJ(std::string meshFile,
+              const Geo::Traingle3<ScalarType> &T)
+{
+    std::vector<Geo::Point3<ScalarType>> VertPos(3);
+    VertPos[0] = T.P(0);
+    VertPos[1] = T.P(1);
+    VertPos[2] = T.P(2);
+    std::vector<std::vector<int>> Connectivity(1);
+    Connectivity[0].push_back(0);
+    Connectivity[0].push_back(1);
+    Connectivity[0].push_back(2);
+    return (WriteOBJ(meshFile, VertPos, Connectivity));
+}
+
+template <class ScalarType>
+bool WriteOBJ(std::string meshFile,
               const std::vector<Geo::Point3<ScalarType> > &VertPos,
               const std::vector<std::pair<int, int> > &Edges)
 {
@@ -636,4 +687,5 @@ bool WriteOBJ(std::string meshFile,
     }
     return (WriteOBJ(meshFile, VertPos, ConnectivityEdges));
 }
+
 #endif

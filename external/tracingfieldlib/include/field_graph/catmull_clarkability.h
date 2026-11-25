@@ -105,11 +105,23 @@ ScalarType CatmullClarkability6(const ScalarType &L1, const ScalarType &L2,
                                 const ScalarType &SideThr) {
   ScalarType minL =
       std::min(L1, std::min(L2, std::min(L3, std::min(L4, std::min(L5, L6)))));
-  ScalarType CC0 = OrderedCC(L1, L3, L5);
-  ScalarType CC1 = OrderedCC(L2, L4, L6);
+  // OLD (one triangle inequality per triple, and SideThr ignored in the
+  // returned value)
+  // ScalarType CC0 = OrderedCC(L1, L3, L5);
+  // ScalarType CC1 = OrderedCC(L2, L4, L6);
+  // ScalarType MinCC = std::min(CC0, CC1);
+  // MinCC += minL * SideThr;
+  // return (std::min(CC0, CC1));
+  // NEW (all three inequalities of each triple, SideThr applied): the even
+  // sides (L1,L3,L5) and the odd ones (L2,L4,L6) must each be a valid
+  // triangle, like CatmullClarkability3
+  ScalarType CC0 = std::min(OrderedCC(L1, L3, L5),
+                            std::min(OrderedCC(L3, L5, L1), OrderedCC(L5, L1, L3)));
+  ScalarType CC1 = std::min(OrderedCC(L2, L4, L6),
+                            std::min(OrderedCC(L4, L6, L2), OrderedCC(L6, L2, L4)));
   ScalarType MinCC = std::min(CC0, CC1);
   MinCC += minL * SideThr;
-  return (std::min(CC0, CC1));
+  return (MinCC);
 }
 
 template <class ScalarType>
@@ -128,8 +140,7 @@ bool IsCatmullClarkable(const std::vector<ScalarType> &EdgeL,
   if (EdgeL.size() == 3)
     CC = (CatmullClarkability3(EdgeL[0], EdgeL[1], EdgeL[2], SideThr));
   if (EdgeL.size() == 4)
-    CC =
-        (CatmullClarkability4(EdgeL[0], EdgeL[1], EdgeL[2], EdgeL[3], SideThr));
+    CC =(CatmullClarkability4(EdgeL[0], EdgeL[1], EdgeL[2], EdgeL[3], SideThr));
   if (EdgeL.size() == 5)
     CC = (CatmullClarkability5(EdgeL[0], EdgeL[1], EdgeL[2], EdgeL[3], EdgeL[4],
                                SideThr));
@@ -567,12 +578,68 @@ bool IsCatmullClarkable(const std::vector<ScalarType> &EdgeL,
 
 // }
 
+// NEW (approximate CC split): true if all the ratios are in
+// [MinRatio, 1-MinRatio]
+template <class ScalarType>
+bool InRatioRange(const std::vector<ScalarType> &Ratio,
+                  const ScalarType MinRatio) {
+  for (size_t k = 0; k < Ratio.size(); k++)
+    if ((Ratio[k] < MinRatio) || (Ratio[k] > ((ScalarType)1 - MinRatio)))
+      return false;
+  return true;
+}
+
+// NEW (approximate CC split): when the patch is not exactly Catmull-Clarkable
+// some exact ratios fall outside [0,1] and the split edge was snapped to a
+// corner (degenerate quads). Here the split lengths x_k (from the start corner
+// of side k) are fitted in least squares to the CC condition
+// x_{k+1} = e_{k-1} - x_{k-1}, keeping every ratio in [MinRatio, 1-MinRatio]
+// (projected Gauss-Seidel, the system has at most 6 unknowns). Exactly
+// CC-able patches keep the exact ratios.
+template <class ScalarType>
+void CCSideSubdRatioFit(const std::vector<ScalarType> &EdgeL,
+                        std::vector<ScalarType> &SideSubRatio,
+                        const ScalarType MinRatio, const int NumIte = 200,
+                        const ScalarType RegW = (ScalarType)0.1) {
+  int n = (int)EdgeL.size();
+  assert((int)SideSubRatio.size() == n);
+  // start from the exact ratios clamped into the bounds
+  std::vector<ScalarType> X0(n), X(n), Low(n), Up(n);
+  for (int k = 0; k < n; k++) {
+    Low[k] = MinRatio * EdgeL[k];
+    Up[k] = ((ScalarType)1 - MinRatio) * EdgeL[k];
+    X0[k] = std::min(std::max(SideSubRatio[k] * EdgeL[k], Low[k]), Up[k]);
+  }
+  X = X0;
+  for (int it = 0; it < NumIte; it++)
+    for (int k = 0; k < n; k++) {
+      // x_k appears in x_k = e_{k-2} - x_{k-2} and x_k = e_k - x_{k+2}
+      int km2 = (k - 2 + n) % n;
+      int kp2 = (k + 2) % n;
+      ScalarType A = EdgeL[km2] - X[km2];
+      ScalarType B = EdgeL[k] - X[kp2];
+      ScalarType V = (A + B + RegW * X0[k]) / ((ScalarType)2 + RegW);
+      X[k] = std::min(std::max(V, Low[k]), Up[k]);
+    }
+  for (int k = 0; k < n; k++)
+    SideSubRatio[k] = X[k] / EdgeL[k];
+}
+
 template <class ScalarType>
 bool CCSideSubdRatio(const std::vector<ScalarType> &EdgeL,
-                    std::vector<ScalarType> &SideSubRatio) {
+                    std::vector<ScalarType> &SideSubRatio,
+                    // NEW (approximate CC split): min distance of a split from
+                    // a corner, as a fraction of the side (<= 0 disables)
+                    const ScalarType MinRatio = (ScalarType)0.1) {
     std::vector<ScalarType> SideSubd;
    
     SideSubRatio.clear();
+    // NEW (approximate CC split): zero length sides give no valid ratio
+    for (size_t k = 0; k < EdgeL.size(); k++)
+      if (EdgeL[k] <= 0) {
+        SideSubRatio.assign(EdgeL.size(), (ScalarType)0.5);
+        return false;
+      }
     if (EdgeL.size() == 2) {
         SideSubRatio.push_back(0.5);
         SideSubRatio.push_back(0.5);
@@ -586,6 +653,9 @@ bool CCSideSubdRatio(const std::vector<ScalarType> &EdgeL,
         SideSubRatio.push_back(s2/EdgeL[0]);
         SideSubRatio.push_back(s0/EdgeL[1]);
         SideSubRatio.push_back(s1/EdgeL[2]);
+        // NEW (approximate CC split): fit when some ratio is out of range
+        if ((MinRatio > 0) && (!InRatioRange(SideSubRatio, MinRatio)))
+          CCSideSubdRatioFit(EdgeL, SideSubRatio, MinRatio);
         return true;
     }
     if (EdgeL.size() == 4) {
@@ -608,6 +678,9 @@ bool CCSideSubdRatio(const std::vector<ScalarType> &EdgeL,
         SideSubRatio.push_back(s1/EdgeL[2]);
         SideSubRatio.push_back(s2/EdgeL[3]);
         SideSubRatio.push_back(s3/EdgeL[4]);
+        // NEW (approximate CC split): fit when some ratio is out of range
+        if ((MinRatio > 0) && (!InRatioRange(SideSubRatio, MinRatio)))
+          CCSideSubdRatioFit(EdgeL, SideSubRatio, MinRatio);
         return true;
     }
     if (EdgeL.size() == 6) {
@@ -624,6 +697,9 @@ bool CCSideSubdRatio(const std::vector<ScalarType> &EdgeL,
         SideSubRatio.push_back(s2/EdgeL[3]);
         SideSubRatio.push_back(s3/EdgeL[4]);
         SideSubRatio.push_back(s4/EdgeL[5]);
+        // NEW (approximate CC split): fit when some ratio is out of range
+        if ((MinRatio > 0) && (!InRatioRange(SideSubRatio, MinRatio)))
+          CCSideSubdRatioFit(EdgeL, SideSubRatio, MinRatio);
         return true;
     }
     return false;

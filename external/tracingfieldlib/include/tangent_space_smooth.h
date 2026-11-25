@@ -433,11 +433,19 @@ private:
       AvgPos /= Num;
       return true;
     } else {
-      std::cout << "WARNING UV SEGS" << std::endl;
+      //might ba all on same side and not intersect
+      // std::cout << "WARNING UV SEGS" << std::endl;
+      // for (size_t i = 0; i < FeaturePos.size(); i++)
+      //     std::cout << " (" << FeaturePos[i].X << "," << FeaturePos[i].Y << ")";
+      // std::cout << std::endl;
+      // AvgPos = Geo::Point2<ScalarType>(0, 0);
+      // for (size_t i = 0; i < FeaturePos.size(); i++)
+      //   AvgPos += FeaturePos[i];
+      // AvgPos = AvgPos / FeaturePos.size();
       AvgPos = Geo::Point2<ScalarType>(0, 0);
-      for (size_t i = 0; i < FeaturePos.size(); i++)
-        AvgPos += FeaturePos[i];
-      AvgPos = AvgPos / FeaturePos.size();
+      for (size_t i = 0; i < StarUV.size(); i++)
+        AvgPos += StarUV[i];
+      AvgPos = AvgPos / StarUV.size();
       return true;
     }
     return false;
@@ -808,8 +816,9 @@ private:
 
     bool post_project = (do_reproject && UVP.post_project);
     if (post_project)
+    {
       Geo::AttractProject<ScalarType>(*UVP.ReprojVert, VertPos, Faces);
-
+    }
     if (do_reproject)
       Geo::ProjectOn<ScalarType>(VertPos, Faces, ReprojFeatureV,
                                  *UVP.ReprojVert, *UVP.ReprojFaces, TriGrid,

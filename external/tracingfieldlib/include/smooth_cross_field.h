@@ -44,13 +44,10 @@
 ////igl related stuff
 #include "connectivity.h"
 #include <igl/principal_curvature.h>
-////directional stuff
-#ifdef USE_DIRECTIONAL
-#include <directional/polyvector_field.h>
-#include <directional/polyvector_to_raw.h>
-#else
+
+////polyvector stuff
 #include <polyvector_field.h>
-#endif
+
 
 template <class ScalarType>
 void ComputeCurvatureField(
@@ -406,73 +403,73 @@ void FixFarFromSingularities(
   // <<Faces.size()<<std::endl;
 }
 
-#ifdef USE_DIRECTIONAL
-template <class ScalarType>
-void SmoothGlobalPolyvector(
-    const std::vector<Geo::Point3<ScalarType>> &VertPos,
-    const std::vector<std::vector<int>> &Faces,
-    const std::vector<Geo::Point3<ScalarType>> &FacesNormals,
-    std::vector<Field::CrossF<ScalarType>> &FaceCurv,
-    SmoothParam<ScalarType> &SParam) {
-  const ScalarType eps = (ScalarType)0.000000001;
+// #ifdef USE_DIRECTIONAL
+// template <class ScalarType>
+// void SmoothGlobalPolyvector(
+//     const std::vector<Geo::Point3<ScalarType>> &VertPos,
+//     const std::vector<std::vector<int>> &Faces,
+//     const std::vector<Geo::Point3<ScalarType>> &FacesNormals,
+//     std::vector<Field::CrossF<ScalarType>> &FaceCurv,
+//     SmoothParam<ScalarType> &SParam) {
+//   const ScalarType eps = (ScalarType)0.000000001;
 
-  assert(Faces.size() == FaceCurv.size());
-  assert(Faces.size() == FacesNormals.size());
+//   assert(Faces.size() == FaceCurv.size());
+//   assert(Faces.size() == FacesNormals.size());
 
-  Eigen::MatrixXi F;
-  typename EigenInterface<ScalarType>::MatrixXm Vf;
+//   Eigen::MatrixXi F;
+//   typename EigenInterface<ScalarType>::MatrixXm Vf;
 
-  // Eigen::MatrixXd PD1,PD2,PV1,PV2;
-  EigenInterface<ScalarType>::GetTriMeshData(VertPos, Faces, F, Vf);
-  Eigen::MatrixXd V = Vf.template cast<double>();
-  Eigen::MatrixXcd output_field;
+//   // Eigen::MatrixXd PD1,PD2,PV1,PV2;
+//   EigenInterface<ScalarType>::GetTriMeshData(VertPos, Faces, F, Vf);
+//   Eigen::MatrixXd V = Vf.template cast<double>();
+//   Eigen::MatrixXcd output_field;
 
-  // get the hard constraints
-  std::vector<size_t> FixedI;
-  GetHardConstraints(VertPos, Faces, FaceCurv, FacesNormals, SParam, FixedI);
+//   // get the hard constraints
+//   std::vector<size_t> FixedI;
+//   GetHardConstraints(VertPos, Faces, FaceCurv, FacesNormals, SParam, FixedI);
 
-  double roSyWeight = -1;
-  int Ndir = SParam.NDir;
-  Eigen::VectorXi FaceI;
-  Eigen::MatrixXd FaceD;
-  Eigen::VectorXd alignWeights;
-  bool useCurvatureSoft = (SParam.GlobalSmoothVal > 0);
-  // std::vector<size_t> FixedI=SParam.FixedCross;
+//   double roSyWeight = -1;
+//   int Ndir = SParam.NDir;
+//   Eigen::VectorXi FaceI;
+//   Eigen::MatrixXd FaceD;
+//   Eigen::VectorXd alignWeights;
+//   bool useCurvatureSoft = (SParam.GlobalSmoothVal > 0);
+//   // std::vector<size_t> FixedI=SParam.FixedCross;
 
-  CollectConstraintsData<ScalarType>(FaceCurv, useCurvatureSoft, FixedI, FaceI,
-                                     FaceD, alignWeights);
+//   CollectConstraintsData<ScalarType>(FaceCurv, useCurvatureSoft, FixedI, FaceI,
+//                                      FaceD, alignWeights);
 
-  directional::polyvector_field(V, F, FaceI, FaceD, SParam.GlobalSmoothVal,
-                                roSyWeight, alignWeights, Ndir, output_field);
+//   directional::polyvector_field(V, F, FaceI, FaceD, SParam.GlobalSmoothVal,
+//                                 roSyWeight, alignWeights, Ndir, output_field);
 
-  Eigen::MatrixXd rawOutField;
-  Eigen::MatrixXd normals, B1, B2;
-  igl::local_basis(Vf, F, B1, B2,
-                   normals); // Compute a local orthogonal reference system for
-                             // each triangle in the given mesh
-  directional::polyvector_to_raw(B1, B2, output_field, Ndir, rawOutField);
+//   Eigen::MatrixXd rawOutField;
+//   Eigen::MatrixXd normals, B1, B2;
+//   igl::local_basis(Vf, F, B1, B2,
+//                    normals); // Compute a local orthogonal reference system for
+//                              // each triangle in the given mesh
+//   directional::polyvector_to_raw(B1, B2, output_field, Ndir, rawOutField);
 
-  assert(output_field.rows() == Faces.size());
-  // finally update the principal directions
-  for (size_t i = 0; i < Faces.size(); i++) {
-    Geo::Point3<ScalarType> dir1;
-    dir1.X = rawOutField(i, 0);
-    dir1.Y = rawOutField(i, 1);
-    dir1.Z = rawOutField(i, 2);
+//   assert(output_field.rows() == Faces.size());
+//   // finally update the principal directions
+//   for (size_t i = 0; i < Faces.size(); i++) {
+//     Geo::Point3<ScalarType> dir1;
+//     dir1.X = rawOutField(i, 0);
+//     dir1.Y = rawOutField(i, 1);
+//     dir1.Z = rawOutField(i, 2);
 
-    dir1.Normalize();
-    Geo::Point3<ScalarType> dir2 = Cross(FacesNormals[i], dir1);
-    dir2.Normalize();
+//     dir1.Normalize();
+//     Geo::Point3<ScalarType> dir2 = Cross(FacesNormals[i], dir1);
+//     dir2.Normalize();
 
-    assert(fabs(dir1.Norm() - 1) < eps);
-    assert(fabs(dir2.Norm() - 1) < eps);
+//     assert(fabs(dir1.Norm() - 1) < eps);
+//     assert(fabs(dir2.Norm() - 1) < eps);
 
-    FaceCurv[i].D[0] = dir1;
-    FaceCurv[i].D[1] = dir2;
-  }
-  MakeDirectionNormalCoherent<ScalarType>(FacesNormals, FaceCurv);
-}
-#else
+//     FaceCurv[i].D[0] = dir1;
+//     FaceCurv[i].D[1] = dir2;
+//   }
+//   MakeDirectionNormalCoherent<ScalarType>(FacesNormals, FaceCurv);
+// }
+// #else
 
 template <class ScalarType>
 void SmoothGlobalPolyvector(
@@ -544,7 +541,7 @@ void SmoothGlobalPolyvector(
   }
   MakeDirectionNormalCoherent<ScalarType>(FacesNormals, FaceCurv);
 }
-#endif
+//#endif
 
 template <class ScalarType>
 void SmoothCrossIterative(

@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <cstdint> // SPEED: uint64_t keys in getFFAdjacency
 #include <iostream>
 #include <set>
 #include <utility>
@@ -285,69 +286,142 @@ inline void FindVertexStar(const std::vector<std::vector<int>> &connections,
 //   }
 // }
 
+// OLD (unordered_map based): kept for reference
+// inline void getFFAdjacency(const std::vector<std::vector<int>> &Faces,
+//                            std::vector<std::vector<int>> &NextF,
+//                            std::vector<std::vector<int>> &NextE) {
+//   using sizeTPair = std::pair<size_t, size_t>;
+//
+//   struct EdgeAdj {
+//     size_t f0 = (size_t)-1, e0 = (size_t)-1;
+//     size_t f1 = (size_t)-1, e1 = (size_t)-1;
+//     uint8_t count = 0;
+//
+//     inline void add(size_t f, size_t e) {
+//       if (count == 0) {
+//         f0 = f;
+//         e0 = e;
+//         count = 1;
+//       } else {
+//         f1 = f;
+//         e1 = e;
+//         count = 2;
+//       }
+//     }
+//   };
+//
+//   NextF.assign(Faces.size(), {});
+//   NextE.assign(Faces.size(), {});
+//
+//   size_t totHalfEdges = 0;
+//   for (const auto &f : Faces)
+//     totHalfEdges += f.size();
+//
+//   std::unordered_map<sizeTPair, EdgeAdj, hashPairSizeTFunction> edge2adj;
+//   edge2adj.reserve(totHalfEdges);
+//
+//   for (size_t fi = 0; fi < Faces.size(); ++fi) {
+//     const auto &F = Faces[fi];
+//     const size_t n = F.size();
+//     NextF[fi].assign(n, -1);
+//     NextE[fi].assign(n, -1);
+//
+//     for (size_t ej = 0; ej < n; ++ej) {
+//       const int v0 = F[ej];
+//       const int v1 = F[(ej + 1) % n];
+//
+//       const size_t a = (size_t)std::min(v0, v1);
+//       const size_t b = (size_t)std::max(v0, v1);
+//       const sizeTPair key(a, b);
+//
+//       edge2adj.try_emplace(key).first->second.add(fi, ej);
+//     }
+//   }
+//
+//   for (const auto &kv : edge2adj) {
+//     const EdgeAdj &a = kv.second;
+//     if (a.count != 2)
+//       continue; // border or non-manifold
+//
+//     const int f0 = (int)a.f0, e0 = (int)a.e0;
+//     const int f1 = (int)a.f1, e1 = (int)a.e1;
+//
+//     NextF[f0][e0] = f1;
+//     NextF[f1][e1] = f0;
+//     NextE[f0][e0] = e1;
+//     NextE[f1][e1] = e0;
+//   }
+// }
+//
+
+// SPEED: same result as the version above (kept commented), with one sorted
+// vector of half edges instead of an unordered_map (one heap node per edge).
+// Note: as in the old version, on an edge shared by more than 2 faces the
+// old EdgeAdj::add overwrote f1, so the first and the LAST face (in face,
+// edge order) were linked, not skipped as its comment said: this is kept
+// to give an identical result.
 inline void getFFAdjacency(const std::vector<std::vector<int>> &Faces,
                            std::vector<std::vector<int>> &NextF,
                            std::vector<std::vector<int>> &NextE) {
-  using sizeTPair = std::pair<size_t, size_t>;
-
-  struct EdgeAdj {
-    size_t f0 = (size_t)-1, e0 = (size_t)-1;
-    size_t f1 = (size_t)-1, e1 = (size_t)-1;
-    uint8_t count = 0;
-
-    inline void add(size_t f, size_t e) {
-      if (count == 0) {
-        f0 = f;
-        e0 = e;
-        count = 1;
-      } else {
-        f1 = f;
-        e1 = e;
-        count = 2;
-      }
-    }
+  struct HalfEdge {
+    uint64_t key;
+    int f;
+    int e;
   };
 
   NextF.assign(Faces.size(), {});
   NextE.assign(Faces.size(), {});
 
   size_t totHalfEdges = 0;
-  for (const auto &f : Faces)
-    totHalfEdges += f.size();
+  for (const auto &F : Faces)
+    totHalfEdges += F.size();
 
-  std::unordered_map<sizeTPair, EdgeAdj, hashPairSizeTFunction> edge2adj;
-  edge2adj.reserve(totHalfEdges);
+  std::vector<HalfEdge> HalfE;
+  HalfE.reserve(totHalfEdges);
 
   for (size_t fi = 0; fi < Faces.size(); ++fi) {
     const auto &F = Faces[fi];
     const size_t n = F.size();
     NextF[fi].assign(n, -1);
     NextE[fi].assign(n, -1);
-
     for (size_t ej = 0; ej < n; ++ej) {
       const int v0 = F[ej];
       const int v1 = F[(ej + 1) % n];
-
-      const size_t a = (size_t)std::min(v0, v1);
-      const size_t b = (size_t)std::max(v0, v1);
-      const sizeTPair key(a, b);
-
-      edge2adj.try_emplace(key).first->second.add(fi, ej);
+      const uint64_t a = (uint64_t)(uint32_t)std::min(v0, v1);
+      const uint64_t b = (uint64_t)(uint32_t)std::max(v0, v1);
+      HalfEdge HE;
+      HE.key = (a << 32) | b;
+      HE.f = (int)fi;
+      HE.e = (int)ej;
+      HalfE.push_back(HE);
     }
   }
 
-  for (const auto &kv : edge2adj) {
-    const EdgeAdj &a = kv.second;
-    if (a.count != 2)
-      continue; // border or non-manifold
+  // sorted by edge, then in the same (face, edge) order of the insertions
+  std::sort(HalfE.begin(), HalfE.end(),
+            [](const HalfEdge &H0, const HalfEdge &H1) {
+              if (H0.key != H1.key)
+                return H0.key < H1.key;
+              if (H0.f != H1.f)
+                return H0.f < H1.f;
+              return H0.e < H1.e;
+            });
 
-    const int f0 = (int)a.f0, e0 = (int)a.e0;
-    const int f1 = (int)a.f1, e1 = (int)a.e1;
-
-    NextF[f0][e0] = f1;
-    NextF[f1][e1] = f0;
-    NextE[f0][e0] = e1;
-    NextE[f1][e1] = e0;
+  size_t i = 0;
+  while (i < HalfE.size()) {
+    size_t j = i;
+    while ((j < HalfE.size()) && (HalfE[j].key == HalfE[i].key))
+      j++;
+    // border (1 face) stays -1, otherwise link the first and the last
+    if (j - i >= 2) {
+      const HalfEdge &H0 = HalfE[i];
+      const HalfEdge &H1 = HalfE[j - 1];
+      NextF[H0.f][H0.e] = H1.f;
+      NextF[H1.f][H1.e] = H0.f;
+      NextE[H0.f][H0.e] = H1.e;
+      NextE[H1.f][H1.e] = H0.e;
+    }
+    i = j;
   }
 }
 
@@ -404,26 +478,52 @@ inline bool HasVFAdj(const std::vector<std::vector<int>> &VF, const int &VIndex,
   return (it != VF[VIndex].end());
 }
 
+// OLD (copies the lists): kept for reference
+// inline void VFDetach(std::vector<std::vector<int>> &VF,
+//                      std::vector<std::vector<int>> &VFIndex, const int &VIndex,
+//                      const int &FIndex) {
+//   assert(VFIndex.size() == VF.size());
+//   assert(VIndex < (int)VF.size());
+//   assert(VIndex < (int)VFIndex.size());
+//   std::vector<int> newVF;
+//   std::vector<int> newVFIdx;
+//   for (size_t i = 0; i < VF[VIndex].size(); i++) {
+//     if (VF[VIndex][i] != FIndex) {
+//       newVF.push_back(VF[VIndex][i]);
+//       newVFIdx.push_back(VFIndex[VIndex][i]);
+//     }
+//   }
+//   //    std::cout<<"Size Before:"<<VF[VIndex].size()<<std::endl;
+//   //    std::cout<<"Size After:"<<newVF.size()<<std::endl;
+//   assert(newVF.size() == VF[VIndex].size() - 1);
+//   assert(newVFIdx.size() == VFIndex[VIndex].size() - 1);
+//   VF[VIndex] = newVF;
+//   VFIndex[VIndex] = newVFIdx;
+// }
+//
+
+// SPEED: same result as the version above (kept commented), compacting the
+// two lists in place instead of building two new vectors at every call
 inline void VFDetach(std::vector<std::vector<int>> &VF,
                      std::vector<std::vector<int>> &VFIndex, const int &VIndex,
                      const int &FIndex) {
   assert(VFIndex.size() == VF.size());
   assert(VIndex < (int)VF.size());
   assert(VIndex < (int)VFIndex.size());
-  std::vector<int> newVF;
-  std::vector<int> newVFIdx;
-  for (size_t i = 0; i < VF[VIndex].size(); i++) {
-    if (VF[VIndex][i] != FIndex) {
-      newVF.push_back(VF[VIndex][i]);
-      newVFIdx.push_back(VFIndex[VIndex][i]);
-    }
+  std::vector<int> &CurrVF = VF[VIndex];
+  std::vector<int> &CurrVFIdx = VFIndex[VIndex];
+  assert(CurrVF.size() == CurrVFIdx.size());
+  size_t k = 0;
+  for (size_t i = 0; i < CurrVF.size(); i++) {
+    if (CurrVF[i] == FIndex)
+      continue;
+    CurrVF[k] = CurrVF[i];
+    CurrVFIdx[k] = CurrVFIdx[i];
+    k++;
   }
-  //    std::cout<<"Size Before:"<<VF[VIndex].size()<<std::endl;
-  //    std::cout<<"Size After:"<<newVF.size()<<std::endl;
-  assert(newVF.size() == VF[VIndex].size() - 1);
-  assert(newVFIdx.size() == VFIndex[VIndex].size() - 1);
-  VF[VIndex] = newVF;
-  VFIndex[VIndex] = newVFIdx;
+  assert(k == CurrVF.size() - 1);
+  CurrVF.resize(k);
+  CurrVFIdx.resize(k);
 }
 
 inline void VFDetach(const std::vector<std::vector<int>> &Faces,
@@ -451,22 +551,70 @@ inline void VFAttach(const std::vector<std::vector<int>> &Faces,
   VFIndex[VIndex].push_back(LocalIdx);
 }
 
+// OLD (std::set of vertices): kept for reference
+// inline void UpdateVF(const std::vector<std::vector<int>> &Faces,
+//                      const std::vector<int> &To_UpdF,
+//                      std::vector<std::vector<int>> &VF,
+//                      std::vector<std::vector<int>> &VFIndex) {
+//
+//   // get all vert involved
+//   std::set<int> To_UpdVSet;
+//   for (int i = 0; i < (int)To_UpdF.size(); i++) {
+//     int FIndex = To_UpdF[i];
+//     for (int j = 0; j < (int)Faces[FIndex].size(); j++) {
+//       int IndexV = Faces[FIndex][j];
+//       To_UpdVSet.insert(IndexV);
+//     }
+//   }
+//
+//   std::vector<int> To_UpdVVect(To_UpdVSet.begin(), To_UpdVSet.end());
+//
+//   for (int i = 0; i < (int)To_UpdVVect.size(); i++) {
+//     // get the faces to update
+//     int VIndex = To_UpdVVect[i];
+//     assert(VIndex >= 0);
+//     assert(VIndex < (int)VF.size());
+//     for (int j = 0; j < (int)To_UpdF.size(); j++) {
+//       int FIndex = To_UpdF[j];
+//       if (!HasVFAdj(VF, VIndex, FIndex))
+//         continue;
+//       VFDetach(VF, VFIndex, VIndex, FIndex);
+//     }
+//   }
+//
+//   // then re-attach
+//   for (int i = 0; i < (int)To_UpdF.size(); i++) {
+//     // get the faces to update
+//     int FIndex = To_UpdF[i];
+//     assert(FIndex >= 0);
+//     assert(FIndex < (int)Faces.size());
+//     for (int j = 0; j < (int)Faces[FIndex].size(); j++) {
+//       int VIndex = Faces[FIndex][j];
+//       VFAttach(Faces, VF, VFIndex, VIndex, FIndex);
+//     }
+//   }
+// }
+//
+
+// SPEED: same result as the version above (kept commented): the std::set of
+// vertices is a sorted unique vector (same ascending order), reused between
+// calls
 inline void UpdateVF(const std::vector<std::vector<int>> &Faces,
                      const std::vector<int> &To_UpdF,
                      std::vector<std::vector<int>> &VF,
                      std::vector<std::vector<int>> &VFIndex) {
 
   // get all vert involved
-  std::set<int> To_UpdVSet;
+  static thread_local std::vector<int> To_UpdVVect;
+  To_UpdVVect.clear();
   for (int i = 0; i < (int)To_UpdF.size(); i++) {
     int FIndex = To_UpdF[i];
-    for (int j = 0; j < (int)Faces[FIndex].size(); j++) {
-      int IndexV = Faces[FIndex][j];
-      To_UpdVSet.insert(IndexV);
-    }
+    for (int j = 0; j < (int)Faces[FIndex].size(); j++)
+      To_UpdVVect.push_back(Faces[FIndex][j]);
   }
-
-  std::vector<int> To_UpdVVect(To_UpdVSet.begin(), To_UpdVSet.end());
+  std::sort(To_UpdVVect.begin(), To_UpdVVect.end());
+  To_UpdVVect.erase(std::unique(To_UpdVVect.begin(), To_UpdVVect.end()),
+                    To_UpdVVect.end());
 
   for (int i = 0; i < (int)To_UpdVVect.size(); i++) {
     // get the faces to update
@@ -630,14 +778,129 @@ inline void VFAttach(const std::vector<std::vector<int>> &Faces,
 //   }
 // }
 
+// OLD (std::set / std::map based): kept for reference
+// inline void UpdateFF(const std::vector<std::vector<int>> &Faces,
+//                      const std::vector<int> &To_UpdF,
+//                      std::vector<std::vector<int>> &NextF,
+//                      std::vector<std::vector<int>> &NextE,
+//                      std::vector<bool> *DeletedF = NULL) {
+//   // // get the involved edges
+//   typedef typename std::pair<int, int> intPair;
+//   std::set<intPair> ToUpdEdges;
+//   for (size_t i = 0; i < To_UpdF.size(); i++) {
+//     int IndexF = To_UpdF[i];
+//     if (DeletedF != NULL) {
+//       assert(!(*DeletedF)[IndexF]);
+//     }
+//     int SizeF = (int)Faces[IndexF].size();
+//     for (size_t j = 0; j < Faces[IndexF].size(); j++) {
+//       int IndexV0 = Faces[IndexF][j];
+//       int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
+//       intPair KeyE(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
+//       ToUpdEdges.insert(KeyE);
+//     }
+//   }
+//
+//   // get Old neighbours
+//   std::set<int> Kernel_F;
+//   for (size_t i = 0; i < To_UpdF.size(); i++) {
+//     int IndexF = To_UpdF[i];
+//
+//     Kernel_F.insert(IndexF);
+//     for (size_t j = 0; j < NextF[IndexF].size(); j++) {
+//       if (NextF[IndexF][j] == -1)
+//         continue;
+//
+//       if ((DeletedF != NULL) && ((*DeletedF)[NextF[IndexF][j]]))
+//         continue;
+//       Kernel_F.insert(NextF[IndexF][j]);
+//     }
+//   }
+//   // add current ketnel
+//   // Kernel_F.insert(To_UpdF.begin(),To_UpdF.end());
+//   std::vector<int> Kernel_FV(Kernel_F.begin(), Kernel_F.end());
+//
+//   // get edges to faces, edge I
+//   std::map<intPair, std::vector<intPair>> EdgeVToFaceE;
+//
+//   for (size_t i = 0; i < Kernel_FV.size(); i++) {
+//     int IndexF = Kernel_FV[i];
+//     int SizeF = (int)Faces[IndexF].size();
+//     for (size_t j = 0; j < Faces[IndexF].size(); j++) {
+//       int IndexV0 = Faces[IndexF][j];
+//       int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
+//       intPair KeyE(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
+//       // // check if the one to be updated or not
+//       // if (ToUpdEdges.count(KeyE) == 0)
+//       //   continue;
+//
+//       intPair FaceE(IndexF, j);
+//       EdgeVToFaceE[KeyE].push_back(FaceE);
+//     }
+//   }
+//
+//   // for (size_t i = 0; i < Kernel_F.size(); i++) {
+//   for (size_t i = 0; i < Kernel_FV.size(); i++) {
+//     int IndexF = Kernel_FV[i];
+//     int SizeF = (int)Faces[IndexF].size();
+//     for (size_t j = 0; j < Faces[IndexF].size(); j++) {
+//       int IndexV0 = Faces[IndexF][j];
+//       int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
+//       intPair KeyE(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
+//       if (EdgeVToFaceE.count(KeyE) == 0) {
+//         assert(0);
+//         continue;
+//       }
+//       if (EdgeVToFaceE[KeyE].size() == 1) {
+//         // in this case is a border
+//         if (ToUpdEdges.count(KeyE) > 0) {
+//           NextF[IndexF][j] = -1;
+//           NextE[IndexF][j] = -1;
+//         }
+//         continue;
+//       }
+//       if (EdgeVToFaceE[KeyE].size() == 2) {
+//         int IndexF0 = EdgeVToFaceE[KeyE][0].first;
+//         int IndexE0 = EdgeVToFaceE[KeyE][0].second;
+//         int IndexF1 = EdgeVToFaceE[KeyE][1].first;
+//         int IndexE1 = EdgeVToFaceE[KeyE][1].second;
+//
+//         // in this case is a border
+//         NextF[IndexF0][IndexE0] = IndexF1;
+//         NextE[IndexF0][IndexE0] = IndexE1;
+//         NextF[IndexF1][IndexE1] = IndexF0;
+//         NextE[IndexF1][IndexE1] = IndexE0;
+//         continue;
+//       }
+//       std::cout << "WARNING FF Topology Face Sharing Edge Num:"
+//                 << EdgeVToFaceE[KeyE].size() << std::endl;
+//       // can't be
+//       assert(0);
+//     }
+//   }
+// }
+//
+
+// SPEED: same result as the version above (kept commented). The std::set of
+// edges, the std::set of faces and the std::map edge -> (face, edge) became
+// sorted vectors reused between calls (no heap node per element): the set
+// of faces keeps its ascending order and the (face, edge) lists of every
+// edge keep their insertion order, so the adjacency is set identically.
 inline void UpdateFF(const std::vector<std::vector<int>> &Faces,
                      const std::vector<int> &To_UpdF,
                      std::vector<std::vector<int>> &NextF,
                      std::vector<std::vector<int>> &NextE,
                      std::vector<bool> *DeletedF = NULL) {
-  // // get the involved edges
   typedef typename std::pair<int, int> intPair;
-  std::set<intPair> ToUpdEdges;
+  struct EdgeFaceE {
+    intPair Key;
+    int F;
+    int E;
+  };
+
+  // the involved edges
+  static thread_local std::vector<intPair> ToUpdEdges;
+  ToUpdEdges.clear();
   for (size_t i = 0; i < To_UpdF.size(); i++) {
     int IndexF = To_UpdF[i];
     if (DeletedF != NULL) {
@@ -647,32 +910,56 @@ inline void UpdateFF(const std::vector<std::vector<int>> &Faces,
     for (size_t j = 0; j < Faces[IndexF].size(); j++) {
       int IndexV0 = Faces[IndexF][j];
       int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
-      intPair KeyE(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
-      ToUpdEdges.insert(KeyE);
+      ToUpdEdges.push_back(
+          intPair(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1)));
     }
   }
+  std::sort(ToUpdEdges.begin(), ToUpdEdges.end());
+  ToUpdEdges.erase(std::unique(ToUpdEdges.begin(), ToUpdEdges.end()),
+                   ToUpdEdges.end());
 
-  // get Old neighbours
-  std::set<int> Kernel_F;
+  // the faces and their old neighbours, ascending (as the old std::set)
+  static thread_local std::vector<int> Kernel_FV;
+  Kernel_FV.clear();
   for (size_t i = 0; i < To_UpdF.size(); i++) {
     int IndexF = To_UpdF[i];
-
-    Kernel_F.insert(IndexF);
+    Kernel_FV.push_back(IndexF);
     for (size_t j = 0; j < NextF[IndexF].size(); j++) {
       if (NextF[IndexF][j] == -1)
         continue;
-
       if ((DeletedF != NULL) && ((*DeletedF)[NextF[IndexF][j]]))
         continue;
-      Kernel_F.insert(NextF[IndexF][j]);
+      Kernel_FV.push_back(NextF[IndexF][j]);
     }
   }
-  // add current ketnel
-  // Kernel_F.insert(To_UpdF.begin(),To_UpdF.end());
-  std::vector<int> Kernel_FV(Kernel_F.begin(), Kernel_F.end());
+  std::sort(Kernel_FV.begin(), Kernel_FV.end());
+  Kernel_FV.erase(std::unique(Kernel_FV.begin(), Kernel_FV.end()),
+                  Kernel_FV.end());
 
-  // get edges to faces, edge I
-  std::map<intPair, std::vector<intPair>> EdgeVToFaceE;
+  // edge -> (face, edge), sorted by edge then (face, edge) = insertion order
+  static thread_local std::vector<EdgeFaceE> EdgeVToFaceE;
+  EdgeVToFaceE.clear();
+  for (size_t i = 0; i < Kernel_FV.size(); i++) {
+    int IndexF = Kernel_FV[i];
+    int SizeF = (int)Faces[IndexF].size();
+    for (size_t j = 0; j < Faces[IndexF].size(); j++) {
+      int IndexV0 = Faces[IndexF][j];
+      int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
+      EdgeFaceE Entry;
+      Entry.Key = intPair(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
+      Entry.F = IndexF;
+      Entry.E = (int)j;
+      EdgeVToFaceE.push_back(Entry);
+    }
+  }
+  std::sort(EdgeVToFaceE.begin(), EdgeVToFaceE.end(),
+            [](const EdgeFaceE &A, const EdgeFaceE &B) {
+              if (A.Key != B.Key)
+                return A.Key < B.Key;
+              if (A.F != B.F)
+                return A.F < B.F;
+              return A.E < B.E;
+            });
 
   for (size_t i = 0; i < Kernel_FV.size(); i++) {
     int IndexF = Kernel_FV[i];
@@ -681,50 +968,43 @@ inline void UpdateFF(const std::vector<std::vector<int>> &Faces,
       int IndexV0 = Faces[IndexF][j];
       int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
       intPair KeyE(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
-      // // check if the one to be updated or not
-      // if (ToUpdEdges.count(KeyE) == 0)
-      //   continue;
-
-      intPair FaceE(IndexF, j);
-      EdgeVToFaceE[KeyE].push_back(FaceE);
-    }
-  }
-
-  // for (size_t i = 0; i < Kernel_F.size(); i++) {
-  for (size_t i = 0; i < Kernel_FV.size(); i++) {
-    int IndexF = Kernel_FV[i];
-    int SizeF = (int)Faces[IndexF].size();
-    for (size_t j = 0; j < Faces[IndexF].size(); j++) {
-      int IndexV0 = Faces[IndexF][j];
-      int IndexV1 = Faces[IndexF][(j + 1) % SizeF];
-      intPair KeyE(std::min(IndexV0, IndexV1), std::max(IndexV0, IndexV1));
-      if (EdgeVToFaceE.count(KeyE) == 0) {
+      // the entries of this edge
+      EdgeFaceE Probe;
+      Probe.Key = KeyE;
+      Probe.F = -1;
+      Probe.E = -1;
+      typename std::vector<EdgeFaceE>::const_iterator First = std::lower_bound(
+          EdgeVToFaceE.begin(), EdgeVToFaceE.end(), Probe,
+          [](const EdgeFaceE &A, const EdgeFaceE &B) { return A.Key < B.Key; });
+      size_t NumE = 0;
+      while (((First + NumE) != EdgeVToFaceE.end()) &&
+             ((First + NumE)->Key == KeyE))
+        NumE++;
+      if (NumE == 0) {
         assert(0);
         continue;
       }
-      if (EdgeVToFaceE[KeyE].size() == 1) {
+      if (NumE == 1) {
         // in this case is a border
-        if (ToUpdEdges.count(KeyE) > 0) {
+        if (std::binary_search(ToUpdEdges.begin(), ToUpdEdges.end(), KeyE)) {
           NextF[IndexF][j] = -1;
           NextE[IndexF][j] = -1;
         }
         continue;
       }
-      if (EdgeVToFaceE[KeyE].size() == 2) {
-        int IndexF0 = EdgeVToFaceE[KeyE][0].first;
-        int IndexE0 = EdgeVToFaceE[KeyE][0].second;
-        int IndexF1 = EdgeVToFaceE[KeyE][1].first;
-        int IndexE1 = EdgeVToFaceE[KeyE][1].second;
-
-        // in this case is a border
+      if (NumE == 2) {
+        int IndexF0 = First->F;
+        int IndexE0 = First->E;
+        int IndexF1 = (First + 1)->F;
+        int IndexE1 = (First + 1)->E;
         NextF[IndexF0][IndexE0] = IndexF1;
         NextE[IndexF0][IndexE0] = IndexE1;
         NextF[IndexF1][IndexE1] = IndexF0;
         NextE[IndexF1][IndexE1] = IndexE0;
         continue;
       }
-      std::cout << "WARNING FF Topology Face Sharing Edge Num:"
-                << EdgeVToFaceE[KeyE].size() << std::endl;
+      std::cout << "WARNING FF Topology Face Sharing Edge Num:" << NumE
+                << std::endl;
       // can't be
       assert(0);
     }
@@ -1203,6 +1483,29 @@ inline void getBorderVert(const std::vector<std::vector<int>> &connections,
   getBorderVert(connections, NextF, NumV + 1, IsB);
 }
 
+// OLD (std::set based): kept for reference
+// inline int NumSharedFaces(const int &VIndex0, const int &VIndex1,
+//                           const std::vector<std::vector<int>> &VF) {
+//   assert(VIndex0 >= 0);
+//   assert(VIndex1 >= 0);
+//   assert(VIndex0 < (int)VF.size());
+//   assert(VIndex1 < (int)VF.size());
+//   int SharedE = 0;
+//   std::set<int> SetF0;
+//   for (size_t i = 0; i < VF[VIndex0].size(); i++)
+//     SetF0.insert(VF[VIndex0][i]);
+//
+//   for (size_t i = 0; i < VF[VIndex1].size(); i++) {
+//     int IndexF1 = VF[VIndex1][i];
+//     if (SetF0.count(IndexF1) > 0)
+//       SharedE++;
+//   }
+//   return SharedE;
+// }
+//
+
+// SPEED: same result as the version above (kept commented): the lists are
+// short (vertex stars), a direct search replaces the std::set
 inline int NumSharedFaces(const int &VIndex0, const int &VIndex1,
                           const std::vector<std::vector<int>> &VF) {
   assert(VIndex0 >= 0);
@@ -1210,13 +1513,10 @@ inline int NumSharedFaces(const int &VIndex0, const int &VIndex1,
   assert(VIndex0 < (int)VF.size());
   assert(VIndex1 < (int)VF.size());
   int SharedE = 0;
-  std::set<int> SetF0;
-  for (size_t i = 0; i < VF[VIndex0].size(); i++)
-    SetF0.insert(VF[VIndex0][i]);
-
+  const std::vector<int> &F0 = VF[VIndex0];
   for (size_t i = 0; i < VF[VIndex1].size(); i++) {
     int IndexF1 = VF[VIndex1][i];
-    if (SetF0.count(IndexF1) > 0)
+    if (std::find(F0.begin(), F0.end(), IndexF1) != F0.end())
       SharedE++;
   }
   return SharedE;

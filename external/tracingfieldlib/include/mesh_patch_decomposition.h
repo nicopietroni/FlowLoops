@@ -66,6 +66,7 @@
 #include "smooth_mesh.h"
 #include <quad_mesh_functions.h>
 #include <quadmesh_smooth_separatrix.h>
+#include <new>
 
 template <class ScalarType> class MeshPatchDecomposition {
   // MESH DATA
@@ -237,9 +238,12 @@ template <class ScalarType> class MeshPatchDecomposition {
   }
 
   void InitGraph() {
+    // Geo::TragingGraphFunctions<ScalarType>::InitFromVertCrossField(
+    //     TGraph, TriVertPos, TriConnectivity, VertCurv, graph_drift_penalty,
+    //     graph_maxAngle, graph_diffuse_step);
     Geo::TragingGraphFunctions<ScalarType>::InitFromVertCrossField(
         TGraph, TriVertPos, TriConnectivity, VertCurv, graph_drift_penalty,
-        graph_maxAngle, graph_diffuse_step);
+        graph_maxAngle, graph_diffuse_step, true, curvature_aniso_weight);
 
     Geo::PathFunctions<ScalarType>::DisableNonDirectableConnections(TGraph);
   }
@@ -370,7 +374,22 @@ template <class ScalarType> class MeshPatchDecomposition {
 
     InitGraph();
 
+    // (the curvature samples are added only for this decomposition)
+    std::vector<Geo::Point3<ScalarType>> SwapPrioPos = PrioritySamplePos;
+    std::vector<Geo::Point3<ScalarType>> SwapPrioDir = PrioritySampleDir;
+    if (curvature_seeds)
+      AddCurvaturePrioritySamples();
+
+    // candidate priority multiplier (empty if not used)
+    Geo::TragingGraphFunctions<ScalarType>::ComputeCurvatureAnisotropyMultiplier(
+        VertCurv, TGraph.NumNodes(),
+        curvature_priority ? curvature_priority_weight : 0,
+        PathSampl.NodePriorityMult, curvature_priority_min_dir,
+        curvature_priority_both_dirs);
+
     AddPrioritySampleVert();
+    PrioritySamplePos = SwapPrioPos;
+    PrioritySampleDir = SwapPrioDir;
     
     InitPatches();
   }
@@ -412,7 +431,39 @@ public:
   int num_samples;
   bool final_removal;
   bool test_remove_only_once;
+  // as the quadrangulator: force all the features as paths (default false)
+  bool force_all_features;
+  // move the paths at the end to spread them (field_graph/path_relaxation.h)
+  bool relax_paths;
+  Geo::PathRelaxParam<ScalarType> RelaxParam;
+  // arc costs weighted by the curvature anisotropy of the field (graph
+  // construction); 0: not used, the default
+  ScalarType curvature_aniso_weight;
+  // candidate priority multiplied by 1 + curvature_priority_weight * Q for the
+  // nodes along the min (or max) curvature direction (Q: curvature anisotropy
+  // in [0,1], averaged over the candidate); default false
+  bool curvature_priority;
+  ScalarType curvature_priority_weight;
+  // the multiplier on the nodes along the min curvature direction (smallest
+  // |K|, default) or along the max one
+  bool curvature_priority_min_dir;
+  // the multiplier on the nodes of both directions (min_dir ignored); default
+  // false
+  bool curvature_priority_both_dirs;
+  // the first sampling starts from the vertices with the highest curvature
+  // anisotropy (AddCurvaturePrioritySamples); default false
+  bool curvature_seeds;
+  // fraction of the vertices used (the most anisotropic ones), at most
+  // curvature_seeds_max samples
+  ScalarType curvature_seeds_ratio;
+  int curvature_seeds_max;
+  // trace along the max curvature direction (loops around a tube) or along
+  // the min one
+  bool curvature_seeds_max_dir;
+  // progress message every progress_every added/removed paths (-1: none)
+  int progress_every;
 
+  //this in case one wants to prioritize certain sample positions and directions
   std::vector<Geo::Point3<ScalarType> > PrioritySamplePos;
   std::vector<Geo::Point3<ScalarType> > PrioritySampleDir;
 
@@ -452,6 +503,37 @@ public:
     // // INITIALIZE SIDE SUBDIVISION
     // SideD.InitFromLabels(DualVertPos, DualConnectivity, PerDualPatchFaceIDX,
     //                      PerDualPatchCornerIDX, DualFeatures);
+  }
+
+  // NEW: back to the state right after the construction, keeping the
+  // parameters, before decomposing again with the same object (the graph,
+  // the sampler, the patch manager and the decomposer keep the data of the
+  // previous decomposition: they are rebuilt in place, in the declaration
+  // order, so the references among them stay valid). Call it before
+  // InitConditions (the conditions of the decomposer are cleared too).
+  void ResetState() {
+    PDeco.~PatchDecomposer<ScalarType>();
+    PatchM.~PatchManaging<ScalarType>();
+    PathSampl.~CrossPathSampling<ScalarType>();
+    TGraph.~TracingGraph<ScalarType>();
+    new (&TGraph) Geo::TracingGraph<ScalarType>(Geo::GT_CrossField);
+    new (&PathSampl) Geo::CrossPathSampling<ScalarType>(
+        TriVertPos, TriConnectivity, TGraph, VertCurv, SingIndex, SingValue);
+    new (&PatchM) Geo::PatchManaging<ScalarType>(
+        TriVertPos, TriConnectivity, VertCurv, TGraph, PathSampl.SelectedPaths);
+    new (&PDeco) Geo::PatchDecomposer<ScalarType>(PatchM, PathSampl, VertCurv,
+                                                  FaceCurv);
+    VertCurv.clear();
+    SingIndex.clear();
+    SingValue.clear();
+    TriCornersIdx.clear();
+    FeatureSingIndex.clear();
+    FeatureSingValue.clear();
+    RemainingF.clear();
+    NewBorder.clear();
+    FalseBorder.clear();
+    DualFeatures.clear();
+    DualCorners.clear();
   }
 
   void AddExtraCondition(Geo::PatchCondition<ScalarType> *PCond) {
@@ -517,6 +599,18 @@ public:
     CCAbility = -1;
     final_removal = false;
     test_remove_only_once = false;
+    force_all_features = false;
+    relax_paths = false;
+    curvature_aniso_weight = 0;
+    curvature_priority = false;
+    curvature_priority_weight = 3;
+    curvature_priority_min_dir = true;
+    curvature_priority_both_dirs = false;
+    curvature_seeds = false;
+    curvature_seeds_ratio = 0.05;
+    curvature_seeds_max = 300;
+    curvature_seeds_max_dir = true;
+    progress_every = -1;
     InitDefaultDualParameters();
   }
 
@@ -537,6 +631,10 @@ public:
     PathSampl.dynamicUpdates = dynamicUpdates;
     PDeco.dynamic_updates = dynamicUpdates;
     PDeco.dynamic_smooth = dynamicSmoothing;
+    PDeco.force_all_features = force_all_features;
+    PDeco.progress_every = progress_every;
+    PDeco.relax_paths = relax_paths;
+    PDeco.RelaxParam = RelaxParam;
     PathSampl.NumSamples = num_samples;
 
     InitializeData();
@@ -804,6 +902,41 @@ public:
       assert(IndexDir<4);
       CrossDir.push_back(VertCurv[OrigV].GetDirection(IndexDir));
     }
+  }
+
+  //this one retrive the nodes and directions for priority sampling
+  // priority samples on the vertices with the highest curvature anisotropy
+  // (quality of InitCrossFieldQualityAsAnisotropy), along the max or the min
+  // curvature direction; added to PrioritySamplePos/Dir
+  void AddCurvaturePrioritySamples()
+  {
+    std::vector<Field::CrossF<ScalarType>> Crosses = VertCurv;
+    InitCrossFieldQualityAsAnisotropy<ScalarType>(Crosses);
+    std::vector<std::pair<ScalarType, int>> QVert;
+    for (size_t i = 0; i < Crosses.size(); i++)
+      QVert.push_back(std::make_pair(Crosses[i].Q, (int)i));
+    std::sort(QVert.rbegin(), QVert.rend());
+    int NumTop = (int)(curvature_seeds_ratio * QVert.size());
+    NumTop = std::max(0, std::min(NumTop, (int)QVert.size()));
+    if (NumTop == 0)
+      return;
+    // at most curvature_seeds_max, evenly picked among the top ones
+    int Step = std::max(1, NumTop / std::max(1, curvature_seeds_max));
+    int NumAdded = 0;
+    for (int i = 0; i < NumTop; i += Step)
+    {
+      int IndexV = QVert[i].second;
+      Geo::Point3<ScalarType> Dir = curvature_seeds_max_dir
+                                        ? Crosses[IndexV].GetBiggestKDir()
+                                        : Crosses[IndexV].GetSmallestKDir();
+      PrioritySamplePos.push_back(TriVertPos[IndexV]);
+      PrioritySampleDir.push_back(Dir);
+      NumAdded++;
+    }
+    if (print_info)
+      std::cout << "Curvature seeds: " << NumAdded
+                << " (min anisotropy " << QVert[NumTop - 1].first << ")"
+                << std::endl;
   }
 
   void AddPrioritySampleVert()

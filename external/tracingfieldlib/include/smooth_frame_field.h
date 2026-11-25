@@ -27,8 +27,10 @@
 #ifndef SMOOTH_FRAME_FIELD
 #define SMOOTH_FRAME_FIELD
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <set>
 #include <cstddef>
 #include <iostream>
 #include <map>
@@ -79,17 +81,30 @@ void PropagateFrameFromBorderCross(const std::vector<std::vector<int> > &Tri,
     SetBorderFrameFromCross(Tri,FaceCross,TriTetraIndex,TetraVertPos,Tetra,TetraFrames);
 
     Field::PrintNonProperFrame(TetraFrames);
+    // for (size_t i=0;i<TriTetraIndex.size();i++)
+    // {
+    //     int IndexT=TriTetraIndex[i];
+    //     SParam.FixedFrame.push_back(IndexT);
+    // }
+
+    // border tetras are always seeds for the propagation, but they become
+    // hard constraints for the final smoothing only if fix_borders is set
+    // (otherwise only the normal is constrained, see GetHardConstraints)
+    std::vector<size_t> PropagationSeeds=SParam.FixedFrame;
     for (size_t i=0;i<TriTetraIndex.size();i++)
     {
         int IndexT=TriTetraIndex[i];
-        SParam.FixedFrame.push_back(IndexT);
+        PropagationSeeds.push_back(IndexT);
+        if (SParam.fix_borders)
+            SParam.FixedFrame.push_back(IndexT);
     }
 
     ScalarType OldTop=SParam.TopIntevalFix;
 
     //GetHardConstraints<ScalarType>(VertPos,Faces,FaceCurv,FacesNormals,SParam,IndexFixed);
 
-    PropagateFrameFromFixedGraph(TetraVertPos,Tetra,SParam.FixedFrame,TetraFrames,SParam.weightByQuality);
+    // PropagateFrameFromFixedGraph(TetraVertPos,Tetra,SParam.FixedFrame,TetraFrames,SParam.weightByQuality);
+    PropagateFrameFromFixedGraph(TetraVertPos,Tetra,PropagationSeeds,TetraFrames,SParam.weightByQuality);
 
     SParam.TopIntevalFix=OldTop;
 }
@@ -332,6 +347,12 @@ void ComputeFrame(const std::vector<Geo::Point3<ScalarType> > &TetraVertPos,
       //should be on the surface
       assert(PosIdx.count(P0)>0);
       assert(PosIdx.count(P1)>0);
+      // in release asserts are removed: operator[] would silently map to 0
+      if ((PosIdx.count(P0)==0)||(PosIdx.count(P1)==0))
+      {
+          std::cout<<"WARNING: feature edge not on the surface, skipped"<<std::endl;
+          continue;
+      }
       //map onto the external surface
       IndexV0=PosIdx[P0];
       IndexV1=PosIdx[P1];
@@ -348,27 +369,43 @@ void ComputeFrame(const std::vector<Geo::Point3<ScalarType> > &TetraVertPos,
                          SParamCross);
 
     std::cout<<"** PROPAGATE"<<std::endl;
-    SmoothFrameParam<ScalarType> SmoothFrameParam;
-    SmoothFrameParam.FixedFrame=FrameParam.FixedFrame;
-    SmoothFrameParam.align_borders=FrameParam.align_borders;
-    SmoothFrameParam.fix_borders=FrameParam.fix_Cross_borders;
-    SmoothFrameParam.weightByQuality=FrameParam.weightByQuality;
+    // the variable was named as its own type (SmoothFrameParam), renamed SFParam
+    // SmoothFrameParam<ScalarType> SmoothFrameParam;
+    // SmoothFrameParam.FixedFrame=FrameParam.FixedFrame;
+    // SmoothFrameParam.align_borders=FrameParam.align_borders;
+    // SmoothFrameParam.fix_borders=FrameParam.fix_Cross_borders;
+    // SmoothFrameParam.weightByQuality=FrameParam.weightByQuality;
+    // PropagateFrameFromBorderCross(SurfExtFace, FaceCurv, ExtPoly, TetraVertPos,
+    //                             Tetra, TetraFrames, SmoothFrameParam);
+    SmoothFrameParam<ScalarType> SFParam;
+    SFParam.FixedFrame=FrameParam.FixedFrame;
+    SFParam.align_borders=FrameParam.align_borders;
+    SFParam.fix_borders=FrameParam.fix_Cross_borders;
+    SFParam.weightByQuality=FrameParam.weightByQuality;
+    // iterations was not passed (always the default 10)
+    SFParam.iterations=FrameParam.iterations;
     PropagateFrameFromBorderCross(SurfExtFace, FaceCurv, ExtPoly, TetraVertPos,
-                                Tetra, TetraFrames, SmoothFrameParam);
+                                Tetra, TetraFrames, SFParam);
 
     //fix all tetras on features
     for (size_t i=0;i<Tetra.size();i++)
     for (size_t j=0;j<Tetra[i].size();j++)
     {
         if (FixedVertIdx.count(Tetra[i][j])>0)
-        SmoothFrameParam.FixedFrame.push_back(i);
+        // SmoothFrameParam.FixedFrame.push_back(i);
+        SFParam.FixedFrame.push_back(i);
     }
 
-    std::sort(SmoothFrameParam.FixedFrame.begin(), SmoothFrameParam.FixedFrame.end());
-              SmoothFrameParam.FixedFrame.resize(std::unique(SmoothFrameParam.FixedFrame.begin(), 
-              SmoothFrameParam.FixedFrame.end()) - SmoothFrameParam.FixedFrame.begin());
-  
-    SmoothFrameIterative(TetraVertPos, Tetra,TetraFrames,SmoothFrameParam); //,VertCurv);
+    // std::sort(SmoothFrameParam.FixedFrame.begin(), SmoothFrameParam.FixedFrame.end());
+    //           SmoothFrameParam.FixedFrame.resize(std::unique(SmoothFrameParam.FixedFrame.begin(),
+    //           SmoothFrameParam.FixedFrame.end()) - SmoothFrameParam.FixedFrame.begin());
+    std::sort(SFParam.FixedFrame.begin(), SFParam.FixedFrame.end());
+    SFParam.FixedFrame.erase(std::unique(SFParam.FixedFrame.begin(),
+                                         SFParam.FixedFrame.end()),
+                             SFParam.FixedFrame.end());
+
+    // SmoothFrameIterative(TetraVertPos, Tetra,TetraFrames,SmoothFrameParam); //,VertCurv);
+    SmoothFrameIterative(TetraVertPos, Tetra,TetraFrames,SFParam); //,VertCurv);
 }
 
 #endif

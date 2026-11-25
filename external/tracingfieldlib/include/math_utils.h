@@ -34,6 +34,7 @@
 #include <functional>
 #include <limits>
 #include <utility>
+#include <iostream>
 
 // #include <math.h>
 #define M_PI 3.14159265358979323846264338327950288 /* pi             */
@@ -82,6 +83,26 @@ inline ScalarType MaxPercentile(const std::vector<ScalarType> &Values,
   IndexMax = std::max(IndexMax, 0);
   ScalarType TestVal = ValuesSorted[IndexMax];
   return TestVal;
+}
+
+//void PrintIntStats(const std::string &label, std::vector<int> V) {
+inline void PrintIntStats(const std::string &label, std::vector<int> V) { // inline: defined in a header
+  if (V.empty()) {
+    std::cout << label << ": (empty)" << std::endl;
+    return;
+  }
+  std::sort(V.begin(), V.end());
+  size_t n = V.size();
+  long sum = 0;
+  for (int x : V)
+    sum += x;
+  double mean = (double)sum / n;
+  int median = V[n / 2];
+  int p10 = V[(size_t)(0.10 * (n - 1))];
+  int p90 = V[(size_t)(0.90 * (n - 1))];
+  std::cout << label << " (n=" << n << "): min=" << V.front()
+            << " p10=" << p10 << " median=" << median << " mean=" << mean
+            << " p90=" << p90 << " max=" << V.back() << std::endl;
 }
 
 template <class ScalarType>

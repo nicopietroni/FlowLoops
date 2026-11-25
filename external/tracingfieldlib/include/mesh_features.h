@@ -44,6 +44,8 @@
 #include <cstddef> // C++
 #include <utility>
 #include <vector>
+#include <edge_mesh_functions.h>
+
 // #include <tuple>
 
 namespace Geo {
@@ -659,6 +661,51 @@ public:
     return NewFeatures;
   }
 
+  typedef typename std::pair<Geo::Point3<ScalarType>, Geo::Point3<ScalarType>> EdgePosK;
+
+  static void
+  GetSubFeatureMesh(const std::vector<Geo::Point3<ScalarType>> &SubMeshVertPos,
+                    const std::vector<std::vector<int>> &SubMeshFaces,
+                    const std::set<EdgePosK> &FeaturesPos,
+                    std::vector<Geo::Point3<ScalarType>> &SubEdgeVertPos,
+                    std::vector<std::vector<int>> &SubEdges) {
+    // get which fetures are stil there
+    std::vector<std::pair<int, int>> SubMeshFeatures;
+    for (size_t i = 0; i < SubMeshFaces.size(); i++)
+      for (size_t j = 0; j < SubMeshFaces[i].size(); j++) {
+        int SizeF = SubMeshFaces[i].size();
+        int IndexV0 = SubMeshFaces[i][j];
+        int IndexV1 = SubMeshFaces[i][(j + 1) % SizeF];
+        Geo::Point3<ScalarType> Pos0 = SubMeshVertPos[IndexV0];
+        Geo::Point3<ScalarType> Pos1 = SubMeshVertPos[IndexV1];
+        EdgePosK Key(std::min(Pos0, Pos1), std::max(Pos0, Pos1));
+        if (FeaturesPos.count(Key) == 0)
+          continue;
+        std::pair<int, int> keyFeature(std::min(IndexV0, IndexV1),
+                                       std::max(IndexV0, IndexV1));
+        SubMeshFeatures.push_back(keyFeature);
+      }
+
+    std::sort(SubMeshFeatures.begin(), SubMeshFeatures.end());
+    SubMeshFeatures.erase(
+        std::unique(SubMeshFeatures.begin(), SubMeshFeatures.end()),
+        SubMeshFeatures.end());
+
+    std::vector<std::pair<int, int>> EdgesPair;
+    // Geo::EdgeMeshFunctions<ScalarType>::ExtractFromFeatures(
+    //     SubMeshVertPos, SubMeshFaces, SubMeshFeatures, SubEdgeVertPos,
+    //     EdgesPair);
+     Geo::EdgeMeshFunctions<ScalarType>::ExtractFromFeatures(
+        SubMeshVertPos, SubMeshFeatures, SubEdgeVertPos,
+        EdgesPair);
+
+    for (size_t i = 0; i < EdgesPair.size(); i++) {
+      SubEdges.resize(SubEdges.size() + 1);
+      SubEdges.back().push_back(EdgesPair[i].first);
+      SubEdges.back().push_back(EdgesPair[i].second);
+    }
+  }
+  
   static void BorderCorners(const std::vector<Geo::Point3<ScalarType>> &VertPos,
                             const std::vector<std::vector<int>> &Faces,
                             const ScalarType feature_angle,
@@ -677,6 +724,7 @@ public:
     }
     getBorderEdges(Faces, VertPairFeatures);
   }
+
 };
 
 } // namespace Geo

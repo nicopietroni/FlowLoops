@@ -116,6 +116,79 @@ bool MatchTriRemeshPreconditions(std::vector<Geo::Point3<ScalarType>> &VertPos,
   return (ManifE && ManifV);
 }
 
+// SAFETY: false (with an error message) if the step just performed broke
+// the manifoldness: operating on a broken topology can make the refinement
+// grow without end (tens of GB)
+template <class ScalarType>
+bool StillManifold(std::vector<Geo::Point3<ScalarType>> &VertPos,
+                   std::vector<std::vector<int>> &Faces,
+                   const TriRemParam<ScalarType> &TRemParam,
+                   const std::string &StepName, int Iter) {
+  if (!TRemParam.check_manifold)
+    return true;
+  // SPEED: the igl based check (MatchTriRemeshPreconditions) converted the
+  // mesh to Eigen and took about 27% of the remeshing time. Only the edge
+  // multiplicity is checked here (the condition broken by the collapse bug),
+  // with one sorted vector of edges.
+  // if (MatchTriRemeshPreconditions(VertPos, Faces))
+  //   return true;
+  std::vector<std::pair<int, int>> Edges;
+  Edges.reserve(Faces.size() * 3);
+  for (size_t i = 0; i < Faces.size(); i++)
+    for (size_t j = 0; j < Faces[i].size(); j++) {
+      int IndexV0 = Faces[i][j];
+      int IndexV1 = Faces[i][(j + 1) % Faces[i].size()];
+      Edges.push_back(std::pair<int, int>(std::min(IndexV0, IndexV1),
+                                          std::max(IndexV0, IndexV1)));
+    }
+  std::sort(Edges.begin(), Edges.end());
+  bool edge_manifold = true;
+  // three equal consecutive entries = an edge with more than 2 faces
+  if (Edges.size() > 2)
+    for (size_t i = 0; i < Edges.size() - 2; i++)
+      if (Edges[i] == Edges[i + 2]) {
+        edge_manifold = false;
+        break;
+      }
+  if (edge_manifold)
+    return true;
+  std::cout << "Error: remeshing broke manifoldness after " << StepName
+            << " (iteration " << Iter << ")" << std::endl;
+  return false;
+}
+
+// POST PROJECTION: feature lines and corners of a mesh as used by the
+// final smoothing: the ones in RemP (tracked by the remesher) plus the ones
+// found by RemP.feature_angle (as SmoothReproject3DStep does)
+template <class ScalarType>
+void GetPostProjectFeatures(const std::vector<Geo::Point3<ScalarType>> &VertPos,
+                            const std::vector<std::vector<int>> &Faces,
+                            const TriRemParam<ScalarType> &TRemParam,
+                            std::vector<std::pair<int, int>> &FeatureLines,
+                            std::vector<int> *Corners) {
+  std::vector<std::vector<int>> NextF, NextE;
+  Geo::getFFAdjacency(Faces, NextF, NextE);
+  std::vector<int> CornersA;
+  FeatureLines.clear();
+  Geo::MeshFeatures<ScalarType>::FeatureCorners(
+      VertPos, Faces, NextF, TRemParam.feature_angle, FeatureLines, CornersA,
+      true);
+  if ((TRemParam.IsFaceEFeature.size() == Faces.size()) &&
+      (TRemParam.IsVertCorner.size() == VertPos.size())) {
+    std::vector<std::pair<int, int>> FeatureLinesB;
+    std::vector<int> CornersB;
+    Geo::MeshFeatures<ScalarType>::GetVertPairFromBoolFeatures(
+        Faces, TRemParam.IsFaceEFeature, FeatureLinesB);
+    Geo::MeshFeatures<ScalarType>::GetVertIndexFromBoolCorners(
+        TRemParam.IsVertCorner, CornersB);
+    FeatureLines.insert(FeatureLines.end(), FeatureLinesB.begin(),
+                        FeatureLinesB.end());
+    CornersA.insert(CornersA.end(), CornersB.begin(), CornersB.end());
+  }
+  if (Corners != NULL)
+    (*Corners) = CornersA;
+}
+
 template <class ScalarType>
 int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
               std::vector<std::vector<int>> &Faces,
@@ -147,6 +220,13 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
   Geo::TriangleSpatialIndex<ScalarType> TriGrid;
   TriGrid.Init(VertPos0, Faces0);
 
+  // POST PROJECTION: features of the input (the given ones and the ones
+  // found by angle, as in SmoothReproject3DStep), the targets of the final
+  // reprojection of the feature lines
+  std::vector<std::pair<int, int>> FeatureLines0;
+  if (TRemParam.post_project)
+    GetPostProjectFeatures(VertPos0, Faces0, TRemParam, FeatureLines0, NULL);
+
   int iter = 0;
   auto t0 = std::chrono::high_resolution_clock::now();
   auto t1 = std::chrono::high_resolution_clock::now();
@@ -176,6 +256,8 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
       durationCollapseSmall +=
           std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0)
               .count();
+      if (!StillManifold(VertPos, Faces, TRemParam, "collapse", s)) // SAFETY
+        return -1;
     }
 
     if (TRemParam.adaptive) {
@@ -193,6 +275,23 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
       durationRefineBig +=
           std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0)
               .count();
+      // OLD: the refinement stopped at the bound, give up
+      // if ((TRemParam.max_faces > 0) &&
+      //     ((int)Faces.size() > TRemParam.max_faces)) {
+      //   std::cout << "Error: remeshing exceeded " << TRemParam.max_faces
+      //             << " faces" << std::endl;
+      //   return -1;
+      // }
+      // MAX FACES: the refinement stopped at the bound (long thin triangles
+      // split into fans), keep going: the flips and collapses of this
+      // iteration fix the slivers and the next refine continues from there.
+      // Memory stays bounded since every refine stops at max_faces.
+      if ((TRemParam.max_faces > 0) &&
+          ((int)Faces.size() > TRemParam.max_faces))
+        std::cout << "Warning: refine stopped at " << TRemParam.max_faces
+                  << " faces (iteration " << s << "), continuing" << std::endl;
+      if (!StillManifold(VertPos, Faces, TRemParam, "refine", s)) // SAFETY
+        return -1;
     }
 
     if (TRemParam.adaptive) {
@@ -208,6 +307,8 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
       durationOptValence +=
           std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0)
               .count();
+      if (!StillManifold(VertPos, Faces, TRemParam, "valence flips", s)) // SAFETY
+        return -1;
     }
     if (TRemParam.adaptive) {
       assert(TRemParam.VertSize.size() == VertPos.size());
@@ -246,6 +347,16 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
 
     if (total_steps == 0)
       break;
+
+    // EARLY STOP: the remaining operations are a negligible fraction of the
+    // mesh; the final flip quadric + smoothing still run after the loop
+    if ((TRemParam.early_stop_ratio > 0) &&
+        (total_steps < TRemParam.early_stop_ratio * (ScalarType)Faces.size())) {
+      if (TRemParam.writeMSG)
+        std::cout << "** Early stop: " << total_steps << " operations on "
+                  << Faces.size() << " faces" << std::endl;
+      break;
+    }
   }
 
   if (TRemParam.flip_quadrics) {
@@ -254,6 +365,8 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
     t1 = std::chrono::high_resolution_clock::now();
     durationOptCurvFlip +=
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+    if (!StillManifold(VertPos, Faces, TRemParam, "quadric flips", -1)) // SAFETY
+      return -1;
   }
 
   if (TRemParam.smooth_mesh) {
@@ -265,6 +378,22 @@ int TriRemesh(std::vector<Geo::Point3<ScalarType>> &VertPos,
     durationSmooth +=
         std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
   }
+  // POST PROJECTION: final smoothing where the input attracts the mesh
+  if (TRemParam.post_project) {
+    SmoothParam<ScalarType> SParam;
+    GetPostProjectFeatures(VertPos, Faces, TRemParam, SParam.Features,
+                           &SParam.FixedVert);
+    // (with fix_borders the border vertices are corners: fixed too)
+    SParam.ReprojFeatures = FeatureLines0;
+    SParam.ReprojVert = &VertPos0;
+    SParam.ReprojFaces = &Faces0;
+    SParam.ReprojStep = 1;
+    SParam.post_project = true;
+    SParam.line_border = false;
+    SParam.NumIte = TRemParam.post_project_steps;
+    Geo::SmoothLaplacian(VertPos, Faces, SParam);
+  }
+
   // Output the duration
   if (TRemParam.writeMSG) {
     std::cout << "** Performed Iterations: " << iter << std::endl;

@@ -306,6 +306,10 @@ public:
       const Geo::FeatureType &FType,
       const InternalFDrawParam &DParam = InternalFDrawParam()) {
 
+    // the glPopAttrib at the end had no matching push: GL_STACK_UNDERFLOW,
+    // then the assert of the next DrawDirectionSimple (cross field) failed
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
+
     std::vector<int> ExitN;
     if (FType == Geo::FTConcave)
       FaceGraph.ConcaveNodesWithExitLabel(ExitN);

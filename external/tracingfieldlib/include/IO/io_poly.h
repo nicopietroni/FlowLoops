@@ -133,4 +133,37 @@ bool LoadTetraMesh(std::string meshFile,
     return true;
 }
 
+// the tet mesh in the same format (Medit .mesh, 1 based)
+template <class ScalarType>
+bool SaveTetraMesh(std::string meshFile,
+                   const std::vector<Geo::Point3<ScalarType> > &VertPos,
+                   const std::vector<std::vector<int> > &Connectivity,
+                   bool writeInfo=true)
+{
+    std::ofstream fout(meshFile.c_str());
+    if(!fout) return false;
+    fout.precision(17);
+    fout<<"MeshVersionFormatted 1\n";
+    fout<<"Dimension 3\n";
+    fout<<"Vertices\n";
+    fout<<VertPos.size()<<"\n";
+    for (size_t i=0;i<VertPos.size();i++)
+        fout<<VertPos[i].X<<" "<<VertPos[i].Y<<" "<<VertPos[i].Z<<" 0\n";
+    fout<<"Tetrahedra\n";
+    fout<<Connectivity.size()<<"\n";
+    for (size_t i=0;i<Connectivity.size();i++)
+    {
+        assert(Connectivity[i].size()==4);
+        for (size_t j=0;j<4;j++)
+            fout<<Connectivity[i][j]+1<<" ";
+        fout<<"0\n";
+    }
+    fout<<"End\n";
+    fout.close();
+    if (writeInfo)
+        std::cout<<"Saved "<<meshFile<<": "<<Connectivity.size()<<" tets, "
+                 <<VertPos.size()<<" vertices"<<std::endl;
+    return true;
+}
+
 #endif

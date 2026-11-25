@@ -421,7 +421,7 @@ class CCabilityCondition : public PatchCondition<ScalarType> {
 
 public:
   ScalarType SideThr;
-
+  ScalarType MaxRegularRatio=40;
   //    bool IsCorrect(const PatchManaging<ScalarType> &PatchM)const override
   //    {(void)PatchM; return true;}
 
@@ -432,20 +432,18 @@ public:
     // if (PatchM.PData.SideLenghts[IndexPatch].size()>1)return false;
     if (PatchM.NumBorders(IndexPatch) != 1)
       return false;
-    // std::cout<<"##DEDE 0:"<<PatchM.NumBorders(IndexPatch)<<std::endl;
-    // std::cout<<"##DEDE 1:"<<PatchM.NumSides(IndexPatch)<<std::endl;
-    // std::cout<<"##DEDE 2:"<<PatchM.NumCorners(IndexPatch)<<std::endl;
-    // std::cout<<"##DEDE
-    // 3:"<<PatchM.PData.SideLenghts[IndexPatch].size()<<std::endl;
-    // PatchM.WriteMesh(IndexPatch,std::string("testCC.obj"));
+    
+    std::vector<ScalarType> SideLengths = PatchM.PData.SideLenghts[IndexPatch][0];
+    if ((MaxRegularRatio>1)&&(SideLengths.size() == 4))
+    {
+      ScalarType MaxL = *std::max_element(SideLengths.begin(), SideLengths.end());
+      ScalarType MinL = *std::min_element(SideLengths.begin(), SideLengths.end());
+      if (MaxL / MinL > MaxRegularRatio)
+        return false;
+    }
 
     // auto t0 = std::chrono::high_resolution_clock::now();
-    bool IsCC = IsCatmullClarkable(PatchM.PData.SideLenghts[IndexPatch][0],
-                                   SideThr, true);
-    // auto t1 = std::chrono::high_resolution_clock::now();
-    // auto elapsed=std::chrono::duration_cast<std::chrono::microseconds>(t1 -
-    // t0); this->elapsed_time+=elapsed.count() * 1e-6;
-
+    bool IsCC = IsCatmullClarkable(SideLengths, SideThr, true);
     return (IsCC);
   }
 

@@ -113,6 +113,19 @@ class BiggestEdgePriority : public Geo::BasicPriorityFunction<ScalarType> {
 public:
   //ScalarType Tolerance = 0.5;
 
+  // FIX (speed): without this every edge of the mesh went through
+  // allocation, connectivity, feature detection and feasibility before
+  // getting priority 0. Same acceptance as GetPriority (> 0 iff CurrL > TargetL),
+  // so results are unchanged.
+  bool QuickReject(Geo::LocalOperation<ScalarType> *Lop,
+                   const ScalarType &TargetL,
+                   const ScalarType &min_acceptable) const override {
+    int V0 = Lop->pos.V;
+    int V1 = Lop->pos.VFlip(Lop->Faces);
+    ScalarType CurrL = (Lop->Vert[V0] - Lop->Vert[V1]).Norm();
+    return (CurrL > TargetL);
+  }
+
   ScalarType GetPriority(Geo::LocalOperation<ScalarType> *Lop,
                          const ScalarType &TargetL,
                          const ScalarType &min_acceptable) const override {
@@ -367,13 +380,63 @@ template <class ScalarType>
 class ImproveVelancyFlipCurvPriority
     : public Geo::BasicPriorityFunction<ScalarType> {
 
+  // FIX (speed): per-vertex cache of ExpectedValence (-1 = not computed).
+  // ExpectedValence sums the angles of the whole vertex star and was
+  // recomputed for the 4 vertices of every evaluated edge. A value is
+  // computed on first use with the same function, and invalidated by
+  // UpdateEnergies for the vertices of the faces changed by a flip (a flip
+  // changes the 3D angles at its 4 vertices), so results are identical.
+  mutable std::vector<int> ExpValCache;
+
+  int CachedExpectedValence(Geo::LocalOperation<ScalarType> *Lop,
+                            const int IndexV) const {
+    if (ExpValCache.size() < Lop->Vert.size())
+      ExpValCache.resize(Lop->Vert.size(), -1);
+    if (ExpValCache[IndexV] < 0)
+      ExpValCache[IndexV] = ExpectedValence<ScalarType>(
+          Lop->Vert, Lop->Faces, Lop->VF, Lop->VFIndex, IndexV);
+    return ExpValCache[IndexV];
+  }
+
 public:
 
   bool force_regularity;
 
+  void InitEnergies(const std::vector<Geo::Point3<ScalarType>> &Vert,
+                    const std::vector<std::vector<int>> &Faces,
+                    const ScalarType &TargetL) override {
+    // FIX (speed): reset the cache at the start of each optimization pass
+    ExpValCache = std::vector<int>(Vert.size(), -1);
+  }
+
+  void UpdateEnergies(const std::vector<Geo::Point3<ScalarType>> &Vert,
+                      const std::vector<std::vector<int>> &Faces,
+                      const ScalarType &TargetL,
+                      const std::vector<int> &To_UpdFaces) override {
+    // FIX (speed): invalidate the vertices of the modified faces
+    ExpValCache.resize(Vert.size(), -1);
+    for (size_t i = 0; i < To_UpdFaces.size(); i++) {
+      int IndexF = To_UpdFaces[i];
+      assert(IndexF >= 0);
+      assert(IndexF < Faces.size());
+      for (size_t j = 0; j < Faces[IndexF].size(); j++)
+        ExpValCache[Faces[IndexF][j]] = -1;
+    }
+  }
+
+  // FIX (speed): the priority only needs connectivity and is cheap, while the
+  // optimizer ran feature detection and geometric feasibility on every edge
+  // before discovering a zero gain. Same acceptance (> 0) as GetPriority,
+  // so results are unchanged.
+  bool QuickReject(Geo::LocalOperation<ScalarType> *Lop,
+                   const ScalarType &TargetL,
+                   const ScalarType &min_acceptable) const override {
+    return (GetPriority(Lop, TargetL, min_acceptable) > 0);
+  }
+
   ScalarType GetPriority(Geo::LocalOperation<ScalarType> *Lop,
                          const ScalarType &TargetL,
-                         const ScalarType &min_acceptable) const override 
+                         const ScalarType &min_acceptable) const override
   {
     if (Lop->pos.IsBorder(Lop->NextF))return 0;
     int F0,F1;
@@ -388,7 +451,8 @@ public:
       assert(Vert[i]<Lop->Vert.size());
 
       if (!force_regularity)
-        ExpVal[i]=ExpectedValence<ScalarType>(Lop->Vert,Lop->Faces, Lop->VF,Lop->VFIndex, Vert[i]);
+        // ExpVal[i]=ExpectedValence<ScalarType>(Lop->Vert,Lop->Faces, Lop->VF,Lop->VFIndex, Vert[i]);
+        ExpVal[i]=CachedExpectedValence(Lop, Vert[i]); // FIX (speed)
       else
         ExpVal[i]=6;
 

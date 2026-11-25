@@ -330,6 +330,8 @@ public:
       const std::vector<int> &Path, const ScalarType scaleVal,
       const ScalarType LineWidth = 3,
       Geo::Point3<ScalarType> ColPath = Geo::Point3<ScalarType>(0, 0, 1)) {
+    // the glPopAttrib at the end had no matching push (GL_STACK_UNDERFLOW)
+    glPushAttrib(GL_ALL_ATTRIB_BITS);
     std::vector<Geo::Point3<ScalarType>> PolyL;
     for (size_t i = 0; i < Path.size(); i++) {
       int IndexP = Field::FrameFieldGraph::PolyOfNode(Path[i]);

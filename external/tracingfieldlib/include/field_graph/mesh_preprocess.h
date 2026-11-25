@@ -34,6 +34,7 @@
 #include <connectivity.h>
 #include <cstddef>
 #include <iostream>
+#include <map>
 #include <mesh_refine.h>
 #include <set>
 //#include <sys/_types/_size_t.h>
@@ -201,7 +202,8 @@ template <class ScalarType> class TracingPreprocess {
                            std::vector<Field::CrossF<ScalarType>> &FaceCurv,
                            std::vector<std::pair<int, int>> &Features,
                            const std::vector<int> &SingIndex,
-                           const int extend_step) {
+                           const int extend_step,
+                           const bool keep_border_edges = false) {
 
     std::vector<int> CloseSingF;
     GetCloseSingFaces(Faces, SingIndex, extend_step, CloseSingF);
@@ -209,6 +211,26 @@ template <class ScalarType> class TracingPreprocess {
     // then set the edges to be split
     std::vector<std::pair<int, int>> To_splitE;
     GetAllEdgesOfFaces(Faces, CloseSingF, To_splitE);
+
+    // keep_border_edges: the border edges are not split (as in
+    // RefineForTracing): e.g. a region of a quad mesh remeshed with its
+    // border fixed, where every border vertex must stay an old one; the
+    // faces are split on their other edges
+    if (keep_border_edges) {
+      std::map<std::pair<int, int>, int> EdgeCount;
+      for (size_t i = 0; i < Faces.size(); i++)
+        for (size_t j = 0; j < Faces[i].size(); j++) {
+          int IndexV0 = Faces[i][j];
+          int IndexV1 = Faces[i][(j + 1) % Faces[i].size()];
+          EdgeCount[std::pair<int, int>(std::min(IndexV0, IndexV1),
+                                        std::max(IndexV0, IndexV1))]++;
+        }
+      std::vector<std::pair<int, int>> KeptE;
+      for (size_t i = 0; i < To_splitE.size(); i++)
+        if (EdgeCount[To_splitE[i]] != 1)
+          KeptE.push_back(To_splitE[i]);
+      To_splitE = KeptE;
+    }
 
     if (To_splitE.size() == 0)
       return false;
@@ -271,9 +293,10 @@ public:
                        std::vector<Field::CrossF<ScalarType>> &FaceCurv,
                        std::vector<std::pair<int, int>> &Features,
                        const std::vector<int> &SingIndex,
-                       const int extend_step) {
+                       const int extend_step,
+                       const bool keep_border_edges = false) {
     RefineCloseSingFacesStep(Pos, Faces, FaceCurv, Features, SingIndex,
-                             extend_step);
+                             extend_step, keep_border_edges);
     // while (RefineCloseSingFacesStep(Pos, Faces, FaceCurv,Features, SingIndex,
     // extend_step))
     // {}
