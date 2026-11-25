@@ -94,36 +94,46 @@ compile.
 ### Usage
 
 ```bash
-./build/loop_weaver test_data/ellipse.obj
+./build/loop_weaver test_data/ellipse.obj            # GUI, mesh loaded
+./build/loop_weaver test_data/ellipse.obj -batch     # whole pipeline, save, quit
+./build/loop_weaver                                  # print all options
 ```
 
-`loop_weaver` is an interactive OpenGL application and **always opens a window,
-including in `-batch` mode** — it needs a display, so it will not run over a
-plain SSH session or in headless CI. In `-batch` mode it runs the full pipeline,
-writes its results and screenshots, and then exits on its own.
+`loop_weaver` is an interactive OpenGL application. With `-batch` it runs the
+full pipeline (symmetry cut, cleaning, cross field, decomposition, relaxation,
+final reconstruction), writes its results and exits; the window is kept hidden
+in that mode, but it still needs a display, so it will not run over a plain
+SSH session or in headless CI.
 
-Outputs are written to the **current working directory**, named after the input
-mesh: `.curve`, `.cycle`, `.feat`, `.field`, `.normalcurve`, `.path`,
-`_edge.obj`, `_remeshed.obj`, `_solved.obj`, `_config.txt`, `_timings.txt`, and
-`_original.png` / `_boundaries.png` screenshots.
+**Parameters** are set in three layers, each overriding the previous one:
 
-**Arguments**
+1. the compiled defaults;
+2. `loopweaver_settings.txt` next to the executable (`build/` for a normal
+   build), one parameter per line. It is written with the compiled defaults
+   the first time the program runs; delete it to write it again after an
+   update that changed them. `-settings <file>` reads another file instead;
+3. the command-line options.
 
-| Argument | Meaning |
+Every run also saves its parameters as `<name>_settings.txt`, so it can be
+repeated with `-settings <name>_settings.txt`.
+
+**Main options** — the full list, with defaults, is in
+[`README_commandline.md`](README_commandline.md):
+
+| Option | Meaning |
 |---|---|
 | `<mesh>.obj` | Input triangle mesh. Required, and must come before any field file. |
-| `<field>.field`, `<field>.ffield` | Optional pre-computed cross field. |
-| `-batch` | Run the whole pipeline without interaction, then exit. |
-| `-symm` | Enable symmetry detection and symmetric tracing. |
-| `-split` | Enable split removal in patch decomposition. |
-| `-curvchange` | Use curvature-change nodes. |
-| `-create_mesh` | Remesh instead of tracing on the original mesh connectivity. |
-| `-angle <deg>` | Feature (sharp edge) detection angle. Default `50`. |
-| `-minsides <n>` | Minimum patch sides, clamped to 2–3. Default `2`. |
-| `-curvangle <deg>` | Max summed side angle, clamped to ≤ 180. Default `180`; `≤ 0` disables the side-curvature condition. |
-| `-bezier <pct>` | Max Bezier fitting error %, clamped to ≤ 5. Default `2`; `≤ 0` disables the condition. |
-| `-subsampl <f>` | Remesh / subsample factor. |
+| `<field>.field` | Optional pre-computed cross field; without it the field is computed from the curvature. |
+| `-batch` | Run the whole pipeline without interaction, save everything, then exit. |
+| `-settings <file>` | Settings file to use instead of `loopweaver_settings.txt`. |
+| `-symm` / `-no_symm` | Cut the mesh with the symmetry plane x=0, decompose one half and mirror the result. |
+| `-angle <deg>` | Sharp feature angle. `180` means no sharp features. |
 | `-error_setup <0-3>` | Reconstruction error preset (see below). A negative value disables the reconstruction condition. |
+| `-error <ratio>`, `-normal_error <deg>` | Set the reconstruction distance and normal-angle limits directly. |
+| `-side_angle <deg>`, `-bezier <pct>`, `-gauss <deg>` | Patch conditions: side turning angle, Bézier fit error, total Gaussian curvature. Each has a `-no_` form to disable it. |
+| `-subsampl <n>` | Subsampling of the paths in the reconstruction condition. |
+| `-thinplate` | Thin-plate-only surfaces, in the condition and the final reconstruction. |
+| `-dynamic` / `-no_dynamic`, `-relax` / `-no_relax` | Retrace candidates after each insertion; relax and prune the paths at the end. Both on by default. |
 
 `-error_setup` presets, from strictest to loosest:
 
@@ -134,19 +144,56 @@ mesh: `.curve`, `.cycle`, `.feat`, `.field`, `.normalcurve`, `.path`,
 | `2` | 0.04 | 50° | 0.5 |
 | `3` | 0.05 | 60° | 0.6 |
 
-Preset `0` is also the built-in default when `-error_setup` is not passed.
+Without `-error_setup` the defaults are 0.02, 30° and 0.5, which match none of
+the presets exactly.
+
+The options `-curvchange`, `-create_mesh`, `-minsides` and `-curvangle` of
+earlier versions are no longer accepted; unknown options are reported and
+ignored.
+
+**Outputs** are written to the **current working directory** (not next to the
+input mesh), named after the input mesh `<name>.obj`:
+
+| File | Content |
+|---|---|
+| `<name>.path` | The loops, as vertex indices of `<name>_remeshed.obj`. With symmetry they cover the whole mirrored mesh. |
+| `<name>_remeshed.obj` | The processed mesh the paths refer to. |
+| `<name>_edge.obj` | The loops as an edge mesh. |
+| `<name>_solved.obj` | The final reconstructed surface. |
+| `<name>.field` | The cross field used. |
+| `<name>_timings.txt` | Field, tracing and surfacing times, and the total loop length. |
+| `<name>_settings.txt` | All the parameters of the run. |
+
+The surfacing solver's exchange files (`.curve`, `.cycle`, `.normalcurve`,
+`.feat`, `.curve_types`) are deleted at the end of the run. Earlier versions
+kept them and also saved `_config.txt` and `_original.png` /
+`_boundaries.png` screenshots, which is why `data/` contains those files.
 
 **Batch runs over a folder**
 
 `run_scripts/` contains wrappers that run every `.obj` in a folder with a fixed
-flag combination, move each result into `build/done/`, and log timeouts:
+option set, move each mesh's outputs into `build/done/`, and log every run to
+`build/timeouts.txt`:
 
 ```bash
-./run_scripts/run_weaver_features_symm.sh /path/to/meshes
+./run_scripts/run_weaver_features_symm.sh /path/to/meshes [extra options]
 ```
 
-These expect the binary at `build/loop_weaver` and require GNU coreutils for
-`gtimeout` (`brew install coreutils` on macOS). Each mesh is given a 1200 s
+| Script | Options |
+|---|---|
+| `run_weaver_features_symm.sh` | `-symm -angle 45 -error_setup 1 -subsampl 2` |
+| `run_weaver_features_no_symm.sh` | `-no_symm -angle 45 -error_setup 1 -subsampl 2` |
+| `run_weaver_no_features_symm.sh` | `-symm -angle 180 -error_setup 1 -subsampl 2` |
+| `run_weaver_no_features_no_symm.sh` | `-no_symm -angle 180 -error_setup 1 -subsampl 2` |
+
+Options after the folder are added to every run (for example
+`-no_dynamic -thinplate`). `run_all_weaver.sh [dataset folder] [extra options]`
+runs all four variants over a dataset folder containing `no_symm_features/`,
+`symm_features/`, `no_symm_no_features/` and `symm_no_features/`, writing to
+`build/output/<variant>/es<preset>/`.
+
+The scripts expect the binary at `build/loop_weaver` and require GNU coreutils
+for `gtimeout` (`brew install coreutils` on macOS). Each mesh is given a 1800 s
 budget.
 
 In case you have technical issues with the project, please raise an issue on GitHub

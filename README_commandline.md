@@ -81,7 +81,8 @@ Unknown options are reported and ignored.
 
 ## Output files
 
-With `-batch` (or *Save All* in the GUI), next to the mesh `name.obj`:
+With `-batch` (or *Save All* in the GUI), in the current working directory
+(not next to the mesh), for an input mesh `name.obj`:
 
 | File | Content |
 |---|---|
@@ -117,21 +118,27 @@ The exchange files of the surfacing solver (`.curve`, `.cycle`,
 
 ## Batch scripts
 
-The four scripts `run_weaver_{features,no_features}_{symm,no_symm}.sh` run
-`loop_weaver -batch` on all the `.obj` of a folder:
+The four scripts `run_scripts/run_weaver_{features,no_features}_{symm,no_symm}.sh`
+run `build/loop_weaver -batch` on all the `.obj` of a folder:
 
 ```bash
-./run_weaver_features_symm.sh <folder> [extra loop_weaver options]
+./run_scripts/run_weaver_features_symm.sh <folder> [extra loop_weaver options]
 ```
 
 | Script | Options |
 |---|---|
-| `run_weaver_features_symm.sh` | `-symm -angle 45 -subsampl 2` |
-| `run_weaver_features_no_symm.sh` | `-no_symm -angle 45 -subsampl 2` |
-| `run_weaver_no_features_symm.sh` | `-symm -angle 180 -subsampl 2` |
-| `run_weaver_no_features_no_symm.sh` | `-no_symm -angle 180 -subsampl 2` |
+| `run_weaver_features_symm.sh` | `-symm -angle 45 -error_setup 1 -subsampl 2` |
+| `run_weaver_features_no_symm.sh` | `-no_symm -angle 45 -error_setup 1 -subsampl 2` |
+| `run_weaver_no_features_symm.sh` | `-symm -angle 180 -error_setup 1 -subsampl 2` |
+| `run_weaver_no_features_no_symm.sh` | `-no_symm -angle 180 -error_setup 1 -subsampl 2` |
 
 The extra options after the folder are passed to every run (for example
-`-no_dynamic -thinplate`). Each mesh has a timeout of 1800 s; the processed
-meshes are moved to `<folder>/done`, and every run (options, success,
-error, timeout, time) is logged in `timeouts.txt`.
+`-no_dynamic -thinplate`). The scripts run from `build/`, so the outputs are
+written there; each mesh has a timeout of 1800 s, its outputs are moved to
+`build/done/`, and every run (options, success, error, timeout, time) is
+logged in `build/timeouts.txt`. The input meshes are left in place.
+
+`run_scripts/run_all_weaver.sh [dataset folder] [extra options]` runs the four
+variants over a dataset folder containing `no_symm_features/`,
+`symm_features/`, `no_symm_no_features/` and `symm_no_features/`, writing to
+`build/output/<variant>/es<preset>/`.

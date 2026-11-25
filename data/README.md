@@ -26,3 +26,15 @@ tar xzf flowloops-results.tar.gz
 ```
 
 Each archive contains its own `README.md` describing the per-model file layout.
+
+## Which version produced these results
+
+The results in `sample/`, `output/` and the release archives were produced by
+an earlier version of LoopWeaver: the code at the `v1.0` and `pre-nico-update`
+tags. Re-running the current version will not reproduce them exactly. Its
+defaults differ (sampling density 6000 instead of 10000, maximum side angle
+120° instead of 180°), the batch scripts add `-error_setup 1 -subsampl 2`,
+and each archived run used its own reconstruction error (0.02 for 101
+models, 0.03 for 16, 0.04 for 8; see each model's `_config.txt`). With
+symmetry, the archived `.path` files may also hold fewer loops than the
+current ones, which cover the whole mirrored mesh.
