@@ -10,8 +10,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ==============================
 # Build mode
 # ==============================
-if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type")
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 option(ENABLE_SANITIZER "Enable sanitizers" OFF)
 option(ENABLE_NATIVE_ARCH "Tune Release builds for this exact CPU (not portable)" OFF)
