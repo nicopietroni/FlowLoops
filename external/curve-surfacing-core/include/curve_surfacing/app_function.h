@@ -6,6 +6,9 @@
 
 #include <vector>
 
+// CS_USE_DIRECTIONAL defined: the cross field of Directional (the original
+// code); otherwise the one of TracingFieldLib (generateCrossfield)
+#ifdef CS_USE_DIRECTIONAL
 // Forward-declare Directional types so consumers don't need directional/ on their include path.
 // The full definitions are only required inside app_function.cpp.
 namespace directional {
@@ -33,14 +36,23 @@ struct CrossfieldCache {
 
 directional::IntrinsicFaceTangentBundle generateDirectionalCrossfieldOptimized(
     Geex::Mesh3D* mesh, CrossfieldCache& cache);
+#else
+// 4-RoSy cross field aligned to the boundary (TracingFieldLib), stored in the
+// faces (theta) and half-edges (pij)
+void generateCrossfield(Geex::Mesh3D* mesh);
+#endif
 
 void facet_differential(const Geex::Mesh3D* pmesh, const Geex::HE_face* face,
                         const Eigen::Vector3d& u_axis, const Eigen::Vector3d& v_axis,
                         std::vector<Eigen::Vector2d>& dx_list, std::vector<Eigen::Vector2d>& dn_list,
                         const Geex::HE_face* prev_face = NULL);
 
+#ifdef CS_USE_DIRECTIONAL
 void fit_curvature_tensor(Geex::Mesh3D* p_mesh, bool use_cross_field,
                           directional::IntrinsicFaceTangentBundle* tb);
+#else
+void fit_curvature_tensor(Geex::Mesh3D* p_mesh, bool use_cross_field);
+#endif
 
 // boundary_anchor_weight: preservation weight anchoring the fitted curvature
 // of faces adjacent to a network curve (they carry the RMF boundary
@@ -100,7 +112,9 @@ bool match_target_curvature(
     std::vector<double>& m_residual_out,
     std::vector<double>& c_residual_out,
     std::vector<Geex::HE_vert*>& selected_vertices,
-    double* avg_movement_out = nullptr);
+    double* avg_movement_out = nullptr,
+    int* solver_iterations_out = nullptr,
+    double* solver_error_out = nullptr);
 
 #ifndef CURVE_SURFACING_STATIC
 #  include "app_function.cpp"

@@ -13,13 +13,13 @@
 
 using namespace std;
 
-DMWT::DMWT(){
+CS_INLINE DMWT::DMWT(){
 	EXPSTOP = false; hasIntersect = false; hasIntersect2 = false; useWorstDihedral = false;
 	withNormal = false; useBiTri = true; dot=2;
 	timePreprocess=0.0; timeMWT = 0.0; round = 0; numoftilingtris = 0;
 }
 
-DMWT::DMWT(int ptn, double * pts, double * deGenPts, bool isdegen){
+CS_INLINE DMWT::DMWT(int ptn, double * pts, double * deGenPts, bool isdegen){
 	initBasics();
 	isDeGen = isdegen;
 	filename = "DMWT_NULL.curve";
@@ -41,7 +41,7 @@ DMWT::DMWT(int ptn, double * pts, double * deGenPts, bool isdegen){
 	}
 }
 
-DMWT::DMWT(int ptn, double * pts, double * deGenPts, float * norms, bool isdegen){
+CS_INLINE DMWT::DMWT(int ptn, double * pts, double * deGenPts, float * norms, bool isdegen){
 	initBasics();
 	isDeGen = isdegen;
 	filename="DMWT_NULL.curve";
@@ -93,7 +93,7 @@ CS_INLINE DMWT::~DMWT(){
 	}
 }
 
-void DMWT::initBasics(){
+CS_INLINE void DMWT::initBasics(){
 	EXPSTOP = false; hasIntersect = false; hasIntersect2 = false; DMWT_LIMIT = 100000; 
 	withNormal = false; useBiTri = true; dot=2; useWorstDihedral = false;
 	timePreprocess=0.0; timeMWT = 0.0; round = 0; numoftilingtris = 0;
@@ -110,7 +110,7 @@ void DMWT::initBasics(){
 
 //==================================Weight Functions============================//
 
-void DMWT::setWeights(float wtri, float wedge, float wbitri, float wtribd, float wwst){
+CS_INLINE void DMWT::setWeights(float wtri, float wedge, float wbitri, float wtribd, float wwst){
 	weightTri = wtri;
 	weightEdge = wedge;
 	weightBiTri = wbitri;
@@ -124,15 +124,15 @@ CS_INLINE float DMWT::costEdge(float measure)  { return weightEdge  * measure; }
 CS_INLINE float DMWT::costBiTri(float measure) { return weightBiTri * measure; }
 CS_INLINE float DMWT::costTriBd(float measure) { return weightTriBd * measure; }
 
-float DMWT::measureEdge(int v1, int v2){
+CS_INLINE float DMWT::measureEdge(int v1, int v2){
 	Point3 p1 = point(v1); Point3 p2 = point(v2);
 	return (float)(p2-p1).length();
 }
-float DMWT::measureTri(int v1, int v2, int v3){
+CS_INLINE float DMWT::measureTri(int v1, int v2, int v3){
 	Point3 p1 = point(v1); Point3 p2 = point(v2); Point3 p3 = point(v3);
 	return (float)((p2-p1)^(p3-p2)).length()/2;
 }
-float DMWT::measureBiTri(int v1, int v2, int p, int q){
+CS_INLINE float DMWT::measureBiTri(int v1, int v2, int p, int q){
 	Point3 p1 = point(v1); Point3 p2 = point(v2); 
 	Point3 pp = point(p);  Point3 pq = point(q);
 	Vector3 n1 = (p2-pp)^(p1-p2); n1.normalize();
@@ -142,7 +142,7 @@ float DMWT::measureBiTri(int v1, int v2, int p, int q){
 	cosvalue = cosvalue > -1.0f ? cosvalue : -1.0f + FLT_EPSILON;
 	return acos(cosvalue);
 }
-float DMWT::measureTriBd(int v1, int v2, int v3, int ni){
+CS_INLINE float DMWT::measureTriBd(int v1, int v2, int v3, int ni){
 	if(!withNormal) return 0.0;
 	Point3 p1 = point(v1); Point3 p2 = point(v2); Point3 p3 = point(v3);
 	Vector3 n = Vector3(normals[ni*3],normals[ni*3+1],normals[ni*3+2]);
@@ -155,7 +155,7 @@ float DMWT::measureTriBd(int v1, int v2, int v3, int ni){
 
 //==================================Tiling Functions============================//
 
-void DMWT::preprocess(){
+CS_INLINE void DMWT::preprocess(){
 	genTriCandidates();
 	buildList();
 }
@@ -171,7 +171,7 @@ CS_INLINE void DMWT::clearTiling(){
 	timeMWT = 0.0; timeTotal = 0.0; numoftilingtris = 0;
 }
 
-bool DMWT::start(){
+CS_INLINE bool DMWT::start(){
 	round++; numoftilingtris=0;
 	int optTile; 
 	tileSegment(startEdge, 0, -1, optimalCost, optTile);
@@ -184,7 +184,7 @@ bool DMWT::start(){
 	return true;
 }
 
-void DMWT::buildTiling(int eind, char side, int ti){
+CS_INLINE void DMWT::buildTiling(int eind, char side, int ti){
 	EdgeInfo * einfo; TriangleInfo * tinfo;
 	int tind,ei; int *tlist; char newside;
 	einfo = edgeInfoList[eind];
@@ -211,15 +211,15 @@ void DMWT::buildTiling(int eind, char side, int ti){
 
 //==================================List Related Functions============================//
 
-char DMWT::getSide(int v1, int v2, int v3){
+CS_INLINE char DMWT::getSide(int v1, int v2, int v3){
 	return (v3<v2 && v3>v1);
 }
-char DMWT::getSide(int i){
+CS_INLINE char DMWT::getSide(int i){
 	if(i==2) return 1;
 	return 0;
 }
 
-int DMWT::scanTrianglesOnce(){
+CS_INLINE int DMWT::scanTrianglesOnce(){
 	int edgenum=0; char side; int min, max, sum = 0, mid, v, v1, v2;
 	for(int t=0; t<numoftris; t++){
 		min = INT_MAX; max = -1; sum = 0;
@@ -243,7 +243,7 @@ int DMWT::scanTrianglesOnce(){
 	return edgenum;
 }
 
-void DMWT::buildList(){
+CS_INLINE void DMWT::buildList(){
 	// Allocate O(N^2) hash tables.
 	// NOTE: For large point counts this is memory-intensive. A future
 	// improvement would replace these with unordered_map<uint64_t,int>.
@@ -316,13 +316,13 @@ void DMWT::buildList(){
 
 //==================================TetGen Functions============================//
 
-void DMWT::setTriangulation(int* triIndices, int numTris) {
+CS_INLINE void DMWT::setTriangulation(int* triIndices, int numTris) {
 	numoftris = numTris;
 	tris = triIndices;
 	owns_tris = true;
 }
 
-void DMWT::genTriCandidates(){
+CS_INLINE void DMWT::genTriCandidates(){
 	in.numberofpoints = numofpoints;
 	if (isDeGen && deGenPoints != nullptr) {
 		in.pointlist = deGenPoints;
@@ -350,19 +350,19 @@ void DMWT::genTriCandidates(){
 
 //==================================IO Write Functions============================//
 
-void DMWT::setPointLimit(int limit){
+CS_INLINE void DMWT::setPointLimit(int limit){
 	DMWT_LIMIT = limit;
 	if(numofpoints>DMWT_LIMIT) {
 		EXPSTOP=true; 
 	}
 }
-void DMWT::setRound(int r){
+CS_INLINE void DMWT::setRound(int r){
 	round = r;
 }
 
 //==================================Evaluation Functions============================//
 
-bool DMWT::triShareEdge(int trii,int trij){
+CS_INLINE bool DMWT::triShareEdge(int trii,int trij){
 	int num = 0;
 	int ipind[3]; int jpind[3];
 	for ( int k = 0; k < 3; k++ ){
@@ -378,7 +378,7 @@ bool DMWT::triShareEdge(int trii,int trij){
 }
 
 // Throws std::runtime_error on file-open failure rather than calling exit().
-void DMWT::saveTilingObj(char* tilefile, const double* finalPoints){
+CS_INLINE void DMWT::saveTilingObj(char* tilefile, const double* finalPoints){
 	int n = numoftilingtris;
 	std::ofstream writer(tilefile, std::ofstream::out);
 	if (!writer.good())
@@ -401,7 +401,7 @@ void DMWT::saveTilingObj(char* tilefile, const double* finalPoints){
 	writer.close();
 }
 
-void DMWT::saveMeshObj(char* tilefile, int nT, const double* mesh){
+CS_INLINE void DMWT::saveMeshObj(char* tilefile, int nT, const double* mesh){
 	std::ofstream writer(tilefile, std::ofstream::out);
 	if (!writer.good())
 		throw std::runtime_error(std::string("saveMeshObj: cannot open file: ") + tilefile);

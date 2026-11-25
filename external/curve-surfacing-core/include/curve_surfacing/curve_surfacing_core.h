@@ -46,6 +46,27 @@ struct CurveSurfacingResult {
     int output_vertices = 0;
     int output_faces    = 0;
 
+    // How the iteration ended: passes actually run, and the average vertex
+    // movement of the last one as a fraction of the bounding-box diagonal
+    // (the convergence measure; below 0.001 counts as converged).
+    int    iterations_run = 0;
+    double final_movement = 0.0;
+
+    // Why the iteration stopped: "converged", "max iterations",
+    // "solver not converged", "diverged: ..." (see stop_on_divergence).
+    // For the last two the mesh is the one of the previous iteration.
+    std::string stop_reason;
+    bool   diverged          = false;
+    double max_flipped_ratio = 0.0; // worst fraction of flipped free-vertex normals
+    double time_ms           = 0.0;
+
+    // Per cycle, per curve in the cycle's own order: 0 = CRVT_LINE (the
+    // normals along it transported consistently and constrain the surface),
+    // 1 = TRIM_LINE (they did not; the curve is a boundary only). The same
+    // information the <output_file_prefix>.curve_types side file summarises
+    // per curve, but per use and in memory.
+    std::vector<std::vector<int>> cycle_curve_types;
+
     // Final mesh result
     Geex::MeshData output_mesh;
 };
@@ -74,6 +95,12 @@ struct CurveSurfacingParams {
     // bounding-box diagonal (paper Sec. 6). Set false to always run the full
     // iteration count (e.g. for convergence experiments).
     bool stop_at_convergence = true;
+
+    // Number of consecutive iterations the movement must stay below that
+    // threshold to count as converged. The movement is not monotone: starting
+    // from a flat initial surface it can dip below 0.1% for one iteration and
+    // grow again while the patch is still inflating (1 = previous behaviour).
+    int convergence_iterations = 2;
 
     // Curvature-variation control weight t ∈ [0,1) (paper Sec. 5.2, Fig. 4).
     // Governs how strongly the flow-field magnitudes are smoothed across each
@@ -104,6 +131,41 @@ struct CurveSurfacingParams {
     // (e.g. 10-25) to let the smoothness term win on noisy boundary fits.
     double boundary_anchor_weight = 50.0;
 
+    // ── Initial surface ──────────────────────────────────────────────────────
+    // Target edge length for the per-patch remesh of the auto-generated
+    // initial surface (TriRemesh, borders fixed). <= 0 keeps the default:
+    // 1.5 x the mean segment length of the cycle's curves.
+    double remesh_target_length = 0.0;
+
+    // Multiplier of the mean curve segment length used as remesh target when
+    // remesh_target_length <= 0 (per patch, from the patch's own cycle).
+    // Applies to auto-generated patches and, with remesh_patches, to
+    // user-supplied ones. 1.5 is the previous hard-coded value.
+    double remesh_edge_multiplier = 1.5;
+
+    // Also remesh user-supplied patches (patches_data) with the same remesher
+    // after loading them. Off by default: a user mesh is inserted verbatim,
+    // which preserves its vertex order.
+    bool remesh_patches = false;
+
+    // Seed for the C library's rand(), which CycleDiscovery draws on; set
+    // once at the start of every call so the same input gives the same
+    // initial surface.
+    unsigned random_seed = 1;
+
+    // ── Normal classification ────────────────────────────────────────────────
+    // A curve's supplied normals are trusted (CRVT_LINE) when the normal at
+    // one end, transported along the curve, meets the other end's within
+    // this angle in degrees (or within it of the opposite direction);
+    // otherwise the curve is a TRIM_LINE and its normals are ignored.
+    double rmf_consistency_angle = 10.0;
+
+    // Skip that check: when normal_data is given, every curve is CRVT_LINE
+    // and the supplied normals constrain the surface everywhere. For a
+    // caller whose normals are a genuine surface normal field that may
+    // legitimately twist along a curve.
+    bool trust_normal_data = false;
+
     // ── Patch selection ──────────────────────────────────────────────────────
     // Empty vector = surface all patches
     std::vector<int> patch_ids;
@@ -121,6 +183,31 @@ struct CurveSurfacingParams {
     // Pre-computed RMF normals (skips internal RMF computation)
     std::optional<Geex::NormalCurveData> normal_data;
 
+    // ── Initial surface ─────────────────────────────────────────────────────
+    // Replace the interior of each (active) patch of the initial surface with
+    // the thin-plate fill tangent to the border normals (TracingFieldLib
+    // Geo::BiharmonicFillTangent; border normals = the curve normals, from
+    // normal_data or the RMF): starts the iteration from an inflated surface
+    // instead of the flat one of the triangulation. biharmonic_tension > 0
+    // moves it towards the harmonic fill (less overshoot).
+    bool   biharmonic_initial = false;
+    double biharmonic_tension = 0.0;
+
+    // ── Progress and safety ──────────────────────────────────────────────────
+    // 0 = silent, 1 = one summary line per call, 2 = also one line per
+    // iteration (independent of enable_logging, which is the full debug log)
+    int progress_level = 0;
+
+    // Stop when the iteration starts deforming the mesh instead of
+    // converging, and keep the previous iterate:
+    //  - more than divergence_flip_ratio of the free vertices have a normal
+    //    flipped (> 90 deg) with respect to the initial surface, or
+    //  - the movement grows by more than divergence_growth times the previous
+    //    one (and is above 0.5% of the bounding-box diagonal)
+    bool   stop_on_divergence    = true;
+    double divergence_flip_ratio = 0.02;
+    double divergence_growth     = 2.0;
+
     // ── Output ───────────────────────────────────────────────────────────────
     // Base path/prefix for side-car output files written by the core.
     // When non-empty, a <output_file_prefix>.curve_types file is written after
@@ -132,14 +219,14 @@ struct CurveSurfacingParams {
 // ── Primary entry points ─────────────────────────────────────────────────────
 
 CurveSurfacingResult curve_surfacing_core(
-    std::vector<Geex::CurveData>& curv_data,
-    std::vector<Geex::CycleData>& cycle_data,
+    const std::vector<Geex::CurveData>& curv_data,
+    const std::vector<Geex::CycleData>& cycle_data,
     const CurveSurfacingParams&   params = {}
 );
 
 Geex::Mesh3D* load_mesh_from_structures(
-    std::vector<Geex::CurveData>& curv_data,
-    std::vector<Geex::CycleData>& cycle_data,
+    const std::vector<Geex::CurveData>& curv_data,
+    const std::vector<Geex::CycleData>& cycle_data,
     const CurveSurfacingParams&   params = {}
 );
 

@@ -7,9 +7,17 @@
 #include "app_data.h"
 #include "app_function.h"
 #include "app_loader.h"
+#include <cstdlib>
+#ifdef CS_USE_DIRECTIONAL
 #include <directional/IntrinsicFaceTangentBundle.h>
 #include <directional/TriMesh.h>
+#endif
 #include <unordered_set>
+#include <unordered_map>
+#include <map>
+#include <biharmonic_fill.h>   // TracingFieldLib: Geo::BiharmonicFillTangent
+#include <chrono>
+#include <iostream>
 
 namespace CurveSurfacing {
 
@@ -94,6 +102,87 @@ static void classify_vertices(
         << (nv - num_active) << " inactive (fixed)" << std::endl;
 }
 
+// Thin-plate fill of the interior of each active patch, tangent to the
+// border normals stored on the curve half-edges (edge->tangent). Border =
+// half-edges of the patch without a face of the same patch on the other side.
+static void biharmonic_fill_patches(
+    Geex::Mesh3D* mesh,
+    const std::unordered_set<Geex::PolyGraph_Cycle*>& active_patches,
+    double tension, Geex::CsLog& log)
+{
+    std::map<Geex::PolyGraph_Cycle*, std::vector<Geex::HE_face*>> patch_faces;
+    for (ptrdiff_t f = 0; f < mesh->get_num_of_faces(); ++f) {
+        Geex::HE_face* face = mesh->get_face(f);
+        if (face && face->curve_cycle && active_patches.count(face->curve_cycle))
+            patch_faces[face->curve_cycle].push_back(face);
+    }
+
+    int num_filled = 0;
+    for (auto& entry : patch_faces) {
+        Geex::PolyGraph_Cycle* cycle = entry.first;
+        std::unordered_map<Geex::HE_vert*, int> local;
+        std::vector<Geex::HE_vert*> verts;
+        std::vector<Geo::Point3<double>> pos;
+        std::vector<std::vector<int>> faces;
+        for (Geex::HE_face* face : entry.second) {
+            std::vector<int> fv;
+            for (Geex::HE_vert* v : face->get_vertices()) {
+                auto it = local.find(v);
+                if (it == local.end()) {
+                    it = local.insert({v, (int)verts.size()}).first;
+                    verts.push_back(v);
+                    pos.push_back(Geo::Point3<double>(v->pos.x(), v->pos.y(), v->pos.z()));
+                }
+                fv.push_back(it->second);
+            }
+            faces.push_back(fv);
+        }
+
+        // border vertices (fixed) with the sum of their border edge normals
+        std::map<int, Geo::Point3<double>> border_normals;
+        for (Geex::HE_face* face : entry.second) {
+            // half-edges of the face in order (start vertex of hes[k] is the
+            // end vertex of hes[k-1])
+            std::vector<Geex::HE_edge*> hes;
+            Geex::HE_edge* he = face->edge;
+            Geex::HE_edge* start = he;
+            do { hes.push_back(he); he = he->next; } while (he && he != start);
+            for (size_t k = 0; k < hes.size(); ++k) {
+                Geex::HE_edge* e = hes[k];
+                const bool border = !e->pair || !e->pair->face ||
+                                    e->pair->face->curve_cycle != cycle;
+                if (!border)
+                    continue;
+                Geo::Point3<double> n(0, 0, 0);
+                if (e->tangent.norm() > 1e-10)
+                    n = Geo::Point3<double>(e->tangent.x(), e->tangent.y(), e->tangent.z());
+                Geex::HE_vert* v0 = hes[(k + hes.size() - 1) % hes.size()]->vert;
+                for (Geex::HE_vert* v : {v0, e->vert}) {
+                    int id = local[v];
+                    auto bn = border_normals.find(id);
+                    if (bn == border_normals.end())
+                        border_normals[id] = n;
+                    else
+                        bn->second = bn->second + n;
+                }
+            }
+        }
+        // curve vertices stay fixed even inside the patch
+        for (size_t i = 0; i < verts.size(); ++i)
+            if (mesh->vertex_on_curve(verts[i]) && !border_normals.count((int)i))
+                border_normals[(int)i] = Geo::Point3<double>(0, 0, 0);
+
+        if (!Geo::BiharmonicFillTangent<double>(pos, faces, border_normals, 10.0, tension))
+            continue;
+        for (size_t i = 0; i < verts.size(); ++i)
+            if (!border_normals.count((int)i))
+                verts[i]->pos = Eigen::Vector3d(pos[i].X, pos[i].Y, pos[i].Z);
+        ++num_filled;
+    }
+    mesh->update_normal();
+    log << "Thin-plate initial surface on " << num_filled << " patches" << std::endl;
+}
+
 // Extract the final mesh state from Mesh3D into a MeshData result.
 static void extract_mesh_data(Geex::Mesh3D* mesh, CurveSurfacingResult& result)
 {
@@ -105,9 +194,17 @@ static void extract_mesh_data(Geex::Mesh3D* mesh, CurveSurfacingResult& result)
 
     result.output_mesh.vertices.clear();
     result.output_mesh.vertices.reserve(nv);
+    // vertex pointer -> index in output_mesh.vertices (replaces the linear
+    // search per face corner below, which made this O(nv * nf))
+    std::unordered_map<const Geex::HE_vert*, int> vert_index;
+    vert_index.reserve(nv);
     for (ptrdiff_t i = 0; i < nv; ++i) {
         Geex::HE_vert* v = mesh->get_vertex(i);
-        if (v) result.output_mesh.vertices.push_back(v->pos);
+        //if (v) result.output_mesh.vertices.push_back(v->pos);
+        if (v) {
+            vert_index[v] = (int)result.output_mesh.vertices.size();
+            result.output_mesh.vertices.push_back(v->pos);
+        }
     }
 
     result.output_mesh.faces.clear();
@@ -124,9 +221,11 @@ static void extract_mesh_data(Geex::Mesh3D* mesh, CurveSurfacingResult& result)
         Geex::HE_edge* start = he;
         do {
             int vertex_index = -1;
-            for (ptrdiff_t j = 0; j < nv; ++j) {
-                if (mesh->get_vertex(j) == he->vert) { vertex_index = j; break; }
-            }
+            //for (ptrdiff_t j = 0; j < nv; ++j) {
+            //    if (mesh->get_vertex(j) == he->vert) { vertex_index = j; break; }
+            //}
+            auto vit = vert_index.find(he->vert);
+            if (vit != vert_index.end()) vertex_index = vit->second;
             if (vertex_index >= 0) face_indices.push_back(vertex_index);
             he = he->next;
         } while (he && he != start);
@@ -146,12 +245,17 @@ static void extract_mesh_data(Geex::Mesh3D* mesh, CurveSurfacingResult& result)
 // CORE IMPLEMENTATION
 // ==============================================================================
 
-CurveSurfacingResult curve_surfacing_core(
-    std::vector<Geex::CurveData>& curv_data,
-    std::vector<Geex::CycleData>& cycle_data,
+CS_INLINE CurveSurfacingResult curve_surfacing_core(
+    const std::vector<Geex::CurveData>& curv_data,
+    const std::vector<Geex::CycleData>& cycle_data,
     const CurveSurfacingParams&   params)
 {
     CurveSurfacingResult result;
+    const auto t_start = std::chrono::steady_clock::now();
+    auto elapsed_ms = [&t_start]() {
+        return std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - t_start).count();
+    };
     Geex::cs_logging_enabled() = params.enable_logging;
     Geex::CsLog log;  // gated by the flag above
 
@@ -165,7 +269,13 @@ CurveSurfacingResult curve_surfacing_core(
             << " cycles with normal data for RMF" << std::endl;
 
     try {
+        std::srand(params.random_seed);
         Geex::CurvNet* curvNet = new Geex::CurvNet();
+        curvNet->remesh_target_length_ = params.remesh_target_length;
+        curvNet->remesh_patches_       = params.remesh_patches;
+        curvNet->remesh_edge_multiplier_ = params.remesh_edge_multiplier;
+        curvNet->rmf_consistency_angle_deg_ = params.rmf_consistency_angle;
+        curvNet->trust_normal_data_    = params.trust_normal_data;
 
         // Load mesh — four possible combinations of patches_data × normal_data.
         Geex::Mesh3D* mesh = nullptr;
@@ -205,6 +315,25 @@ CurveSurfacingResult curve_surfacing_core(
 
         log << "Successfully created mesh with " << mesh->get_num_of_vertices()
             << " vertices and " << mesh->get_num_of_faces() << " faces" << std::endl;
+        if (params.progress_level >= 2)
+            std::cout << "[CurveSurfacing] initial surface: " << cycle_data.size()
+                      << " cycles, " << mesh->get_num_of_vertices() << " vertices, "
+                      << mesh->get_num_of_faces() << " faces (" << (int)elapsed_ms()
+                      << " ms)" << std::endl;
+
+        // The classification the load step decided on, per cycle edge.
+        for (int c = 0; c < curvNet->m_p_polygraph_->get_num_of_cycles(); ++c) {
+            std::vector<int> types;
+            Geex::PolyGraph_Cycle* cycle = curvNet->m_p_polygraph_->get_cycle(c);
+            if (cycle && cycle->edge) {
+                Geex::PolyGraph_Edge* e = cycle->edge;
+                do {
+                    types.push_back(e->curve_type == Geex::CURVE_TYPE::CRVT_LINE ? 0 : 1);
+                    e = e->next;
+                } while (e && e != cycle->edge);
+            }
+            result.cycle_curve_types.push_back(std::move(types));
+        }
 
         // Build the active-patch set.
         std::unordered_set<Geex::PolyGraph_Cycle*> active_patches;
@@ -234,6 +363,10 @@ CurveSurfacingResult curve_surfacing_core(
         classify_vertices(mesh, active_patches, surface_all_patches,
                           is_active_vertex, is_boundary_vertex, log);
 
+        // Optional inflated initial surface (thin-plate fill).
+        if (params.biharmonic_initial)
+            biharmonic_fill_patches(mesh, active_patches, params.biharmonic_tension, log);
+
         // Set up processing structures.
         Geex::APP_DataStructs* delaunay_ = new Geex::APP_DataStructs();
         delaunay_->m_init_mesh_   = mesh;
@@ -248,11 +381,17 @@ CurveSurfacingResult curve_surfacing_core(
         }
 
         // Cross-field and initial curvature tensor.
+#ifdef CS_USE_DIRECTIONAL
         directional::IntrinsicFaceTangentBundle tb;
         directional::TriMesh triMesh;
         tb = generateDirectionalCrossfield(delaunay_->m_init_mesh_, tb, triMesh);
         log << "Fitting curvature tensor..." << std::endl;
         fit_curvature_tensor(delaunay_->m_init_mesh_, true, &tb);
+#else
+        generateCrossfield(delaunay_->m_init_mesh_);
+        log << "Fitting curvature tensor..." << std::endl;
+        fit_curvature_tensor(delaunay_->m_init_mesh_, true);
+#endif
 
         // Iteration loop.
         {
@@ -264,7 +403,49 @@ CurveSurfacingResult curve_surfacing_core(
 
             log << "Running " << params.iterations << " surfacing iterations..." << std::endl;
 
+            // Divergence check data: normals of the initial surface (vertex
+            // set does not change, only connectivity via Delaunay flips) and
+            // the positions at the start of each iteration, to go back to.
+            mesh->update_normal();
+            const ptrdiff_t nv_all = mesh->get_num_of_vertices();
+            std::vector<Eigen::Vector3d> initial_normals(nv_all);
+            std::vector<char> is_free(nv_all, 0);
+            int num_free = 0;
+            for (ptrdiff_t v = 0; v < nv_all; ++v) {
+                Geex::HE_vert* vert = mesh->get_vertex(v);
+                if (!vert) continue;
+                initial_normals[v] = vert->normal;
+                bool free_v = !mesh->is_on_boundary(vert) && !mesh->vertex_on_curve(vert);
+                if (!surface_all_patches)
+                    free_v = free_v && is_active_vertex[v] && !is_boundary_vertex[v];
+                if (free_v) { is_free[v] = 1; ++num_free; }
+            }
+            std::vector<Eigen::Vector3d> iterate_start_pos(nv_all);
+            auto save_positions = [&]() {
+                for (ptrdiff_t v = 0; v < nv_all; ++v)
+                    if (Geex::HE_vert* vert = mesh->get_vertex(v)) iterate_start_pos[v] = vert->pos;
+            };
+            auto restore_positions = [&]() {
+                for (ptrdiff_t v = 0; v < nv_all; ++v)
+                    if (Geex::HE_vert* vert = mesh->get_vertex(v)) vert->pos = iterate_start_pos[v];
+                mesh->update_normal();
+            };
+            auto flipped_ratio = [&]() {
+                if (num_free == 0) return 0.0;
+                int flipped = 0;
+                for (ptrdiff_t v = 0; v < nv_all; ++v) {
+                    if (!is_free[v]) continue;
+                    Geex::HE_vert* vert = mesh->get_vertex(v);
+                    if (vert && vert->normal.dot(initial_normals[v]) < 0) ++flipped;
+                }
+                return double(flipped) / double(num_free);
+            };
+            double prev_movement = -1.0;
+            int below_threshold = 0; // consecutive iterations under 0.1% bbox
+            result.stop_reason = "max iterations";
+
             for (int itr = 0; itr < params.iterations; ++itr) {
+                save_positions();
                 // Build the vertex selection for this iteration.
                 std::vector<Geex::HE_vert*> selected_vertices;
                 if (!surface_all_patches) {
@@ -295,19 +476,34 @@ CurveSurfacingResult curve_surfacing_core(
                 bool topo = false;
                 delaunay_->m_init_mesh_->make_delaunay(topo);
                 delaunay_->m_init_mesh_->update_normal();
+#ifdef CS_USE_DIRECTIONAL
                 tb = generateDirectionalCrossfield(delaunay_->m_init_mesh_, tb, triMesh);
                 fit_curvature_tensor(delaunay_->m_init_mesh_, true, &tb);
+#else
+                generateCrossfield(delaunay_->m_init_mesh_);
+                fit_curvature_tensor(delaunay_->m_init_mesh_, true);
+#endif
                 smooth_curvature_variation(delaunay_->m_init_mesh_,
                                            params.curvature_smooth_weight, geo_solver,
                                            params.boundary_anchor_weight);
 
                 double avg_movement = 0.0;
+                int solver_its = 0;
+                double solver_err = 0.0;
                 const bool converged = match_target_curvature(
                     delaunay_->m_init_mesh_, v_residuals, m_residuals, c_residuals,
-                    selected_vertices, &avg_movement);
+                    selected_vertices, &avg_movement, &solver_its, &solver_err);
                 if (!converged) {
                     log << "  Solver did not converge at iteration " << (itr + 1)
                         << ". Stopping and using previous iteration result." << std::endl;
+                    // the relaxation of this iteration already moved the
+                    // vertices: really go back to the previous iterate
+                    restore_positions();
+                    result.stop_reason = "solver not converged";
+                    if (params.progress_level >= 1)
+                        std::cout << "[CurveSurfacing] WARNING: least-squares solver not converged at iteration "
+                                  << (itr + 1) << " (" << solver_its << " its, error " << solver_err
+                                  << "), keeping iteration " << itr << std::endl;
                     break;
                 }
                 delaunay_->m_init_mesh_->update_normal();
@@ -323,9 +519,47 @@ CurveSurfacingResult curve_surfacing_core(
                      Eigen::Vector3d(m->xmin, m->ymin, m->zmin)).norm();
                 const double rel_movement =
                     (bbox_diag > 1e-12) ? avg_movement / bbox_diag : 0.0;
+                // Divergence check: flipped normals or growing movement
+                const double flip = flipped_ratio();
+                result.max_flipped_ratio = std::max(result.max_flipped_ratio, flip);
+                if (params.progress_level >= 2)
+                    std::cout << "[CurveSurfacing]   it " << (itr + 1) << "/" << params.iterations
+                              << "  move " << rel_movement * 100.0 << "% bbox"
+                              << "  flipped " << flip * 100.0 << "%"
+                              << "  solver " << solver_its << " its"
+                              << "  (" << (int)elapsed_ms() << " ms)" << std::endl;
+                if (params.stop_on_divergence) {
+                    std::string why;
+                    if (flip > params.divergence_flip_ratio)
+                        why = "normals flipped on " + std::to_string(flip * 100.0) + "% of free vertices";
+                    else if (prev_movement > 0 && rel_movement > 0.005 &&
+                             rel_movement > params.divergence_growth * prev_movement)
+                        why = "movement grew from " + std::to_string(prev_movement * 100.0) +
+                              "% to " + std::to_string(rel_movement * 100.0) + "% of bbox";
+                    if (!why.empty()) {
+                        restore_positions();
+                        result.diverged = true;
+                        result.stop_reason = "diverged: " + why;
+                        if (params.progress_level >= 1)
+                            std::cout << "[CurveSurfacing] WARNING: iteration " << (itr + 1)
+                                      << " diverging (" << why << "), keeping iteration "
+                                      << itr << std::endl;
+                        break;
+                    }
+                }
+                prev_movement = rel_movement;
+
+                result.iterations_run = itr + 1;
+                result.final_movement = rel_movement;
                 log << "  Iteration " << (itr + 1) << " complete (avg movement "
                     << rel_movement * 100.0 << "% of bbox)" << std::endl;
-                if (rel_movement < 0.001) {
+                // if (rel_movement < 0.001) {
+                //     result.stop_reason = "converged";
+                //     if (params.stop_at_convergence) {
+                if (rel_movement < 0.001) ++below_threshold;
+                else below_threshold = 0;
+                if (below_threshold >= std::max(1, params.convergence_iterations)) {
+                    result.stop_reason = "converged";
                     if (params.stop_at_convergence) {
                         log << "  Average movement below 0.1% of bbox — converged, stopping."
                             << std::endl;
@@ -363,7 +597,15 @@ CurveSurfacingResult curve_surfacing_core(
 
         extract_mesh_data(delaunay_->m_init_mesh_, result);
         result.success = true;
+        result.time_ms = elapsed_ms();
         log << "Core curve surfacing completed successfully!" << std::endl;
+        if (params.progress_level >= 1)
+            std::cout << "[CurveSurfacing] " << cycle_data.size() << " cycles, "
+                      << result.output_vertices << " vertices: " << result.iterations_run
+                      << "/" << params.iterations << " iterations, last move "
+                      << result.final_movement * 100.0 << "% bbox, max flipped "
+                      << result.max_flipped_ratio * 100.0 << "%, " << result.stop_reason
+                      << " (" << (int)result.time_ms << " ms)" << std::endl;
 
         // Write per-curve type listing if a file prefix was supplied.
         if (!params.output_file_prefix.empty()) {
@@ -388,9 +630,9 @@ CurveSurfacingResult curve_surfacing_core(
 // LOAD MESH
 // ==============================================================================
 
-Geex::Mesh3D* load_mesh_from_structures(
-    std::vector<Geex::CurveData>& curv_data,
-    std::vector<Geex::CycleData>& cycle_data,
+CS_INLINE Geex::Mesh3D* load_mesh_from_structures(
+    const std::vector<Geex::CurveData>& curv_data,
+    const std::vector<Geex::CycleData>& cycle_data,
     const CurveSurfacingParams&   params)
 {
     Geex::cs_logging_enabled() = params.enable_logging;
@@ -399,7 +641,16 @@ Geex::Mesh3D* load_mesh_from_structures(
     const bool has_patches = params.patches_data.has_value();
     const bool has_normals = params.normal_data.has_value();
 
+    //Geex::CurvNet* curvNet = new Geex::CurvNet();
+    // Same seed and loader knobs as curve_surfacing_core, otherwise the
+    // initial surface built here differs from the one the core starts from
+    std::srand(params.random_seed);
     Geex::CurvNet* curvNet = new Geex::CurvNet();
+    curvNet->remesh_target_length_      = params.remesh_target_length;
+    curvNet->remesh_patches_            = params.remesh_patches;
+    curvNet->remesh_edge_multiplier_    = params.remesh_edge_multiplier;
+    curvNet->rmf_consistency_angle_deg_ = params.rmf_consistency_angle;
+    curvNet->trust_normal_data_         = params.trust_normal_data;
 
     Geex::Mesh3D* mesh = nullptr;
     if (!has_patches && !has_normals) {
@@ -426,7 +677,7 @@ Geex::Mesh3D* load_mesh_from_structures(
 // EXTRACT CYCLE RMF DATA  (signature unchanged — not part of the new params API)
 // ==============================================================================
 
-std::vector<std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>>
+CS_INLINE std::vector<std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>>
 extract_cycle_rmf_data(
     std::vector<Geex::CurveData>& curv_data,
     std::vector<Geex::CycleData>& cycle_data,

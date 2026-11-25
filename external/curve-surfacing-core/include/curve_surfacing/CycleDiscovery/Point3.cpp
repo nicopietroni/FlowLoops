@@ -22,51 +22,51 @@ CS_INLINE Point3::Point3(double _x, double _y, double _z) : x(_x), y(_y), z(_z)
 {
 }
 
-Point3& Point3::operator=(const Point3& a)
+CS_INLINE Point3& Point3::operator=(const Point3& a)
 {
     x = a[0]; y = a[1]; z = a[2];
     return *this;
 }
 
-const double& Point3::operator[](int n) const
+CS_INLINE const double& Point3::operator[](int n) const
 {
 	return (&x)[n];
 }
 
-double& Point3::operator[](int n)
+CS_INLINE double& Point3::operator[](int n)
 {
 	return (&x)[n];
 }
 
-Point3& Point3::operator+=(const Vector3& v)
+CS_INLINE Point3& Point3::operator+=(const Vector3& v)
 {
     x += v[0]; y += v[1]; z += v[2];
     return *this;
 }
 
-Point3& Point3::operator-=(const Vector3& v)
+CS_INLINE Point3& Point3::operator-=(const Vector3& v)
 {
     x -= v[0]; y -= v[1]; z -= v[2];
     return *this;
 }
 
-Point3& Point3::operator*=(double s)
+CS_INLINE Point3& Point3::operator*=(double s)
 {
     x *= s; y *= s; z *= s;
     return *this;
 }
 
-Vector3 Point3::operator-(const Point3 & p) const
+CS_INLINE Vector3 Point3::operator-(const Point3 & p) const
 {
     return Vector3(x - p.x, y - p.y, z - p.z);
 }
 
-Point3 Point3::operator+(const Vector3 & v) const
+CS_INLINE Point3 Point3::operator+(const Vector3 & v) const
 {
     return Point3(x + v[0], y + v[1], z + v[2]);
 }
 
-Point3 Point3::operator-(const Vector3 & v) const
+CS_INLINE Point3 Point3::operator-(const Vector3 & v) const
 {
     return Point3(x - v[0], y - v[1], z - v[2]);
 }
@@ -95,12 +95,12 @@ CS_INLINE double Point3::distanceFromOriginSquared() const
     return x * x + y * y + z * z;
 }
 
-bool Point3::operator==( const Point3 &p ) const
+CS_INLINE bool Point3::operator==( const Point3 &p ) const
 {
     return x == p.x && y == p.y && z == p.z;
 }
 
-bool Point3::operator!=( const Point3 &p ) const
+CS_INLINE bool Point3::operator!=( const Point3 &p ) const
 {
     return x != p.x || y != p.y || z != p.z;
 }

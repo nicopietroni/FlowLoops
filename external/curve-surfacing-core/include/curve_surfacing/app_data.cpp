@@ -24,7 +24,7 @@
 namespace Geex {
 
     
-    APP_DataStructs::APP_DataStructs() {
+    CS_INLINE APP_DataStructs::APP_DataStructs() {
 		m_init_mesh_ = NULL;
 		m_reference_mesh_ = NULL;
 		m_b_bdry_fixed_ = false;
@@ -46,17 +46,17 @@ namespace Geex {
 		m_b_align_bdry_curv_ = false;
     }
 
-    APP_DataStructs::~APP_DataStructs() {
+    CS_INLINE APP_DataStructs::~APP_DataStructs() {
 		if(m_init_mesh_) delete m_init_mesh_;
 		if(m_reference_mesh_) delete m_reference_mesh_;
 		if(m_p_curve_net_) delete m_p_curve_net_;
     }
 
-    void APP_DataStructs::save(const std::string& filename) {
+    CS_INLINE void APP_DataStructs::save(const std::string& filename) {
         std::ofstream out(filename.c_str()) ;
     }
     
-    void APP_DataStructs::load(const std::string& filename) {
+    CS_INLINE void APP_DataStructs::load(const std::string& filename) {
         cs_log() << "loading " << filename << std::endl ;
 
 		if (m_init_mesh_) delete m_init_mesh_;
@@ -494,7 +494,7 @@ namespace Geex {
 	}
 
 
-	void APP_DataStructs::load_curv_mesh(const std::string& filename){
+	CS_INLINE void APP_DataStructs::load_curv_mesh(const std::string& filename){
 		cs_log() << "loading curve network and surface from " << filename << std::endl;
 
 		if(!m_p_curve_net_) 
@@ -520,7 +520,7 @@ namespace Geex {
 			m_init_mesh_->get_num_of_edges()/2 << " edges. " << std::endl;
 	}
 
-	void APP_DataStructs::load_curv_mesh_mod(std::vector<CurveData> curv_data, std::vector<CycleData> cycle_data){
+	CS_INLINE void APP_DataStructs::load_curv_mesh_mod(std::vector<CurveData> curv_data, std::vector<CycleData> cycle_data){
 
 		if(!m_p_curve_net_) 
 			m_p_curve_net_ = new CurvNet;
@@ -546,7 +546,7 @@ namespace Geex {
 	}
 
 
-	void APP_DataStructs::load_curvnet(const std::string& filename){
+	CS_INLINE void APP_DataStructs::load_curvnet(const std::string& filename){
 		cs_log() << "loading curve network from "<<filename<<std::endl;
 		if(filename.substr(filename.length()-4,4) == ".obj"){
 			if(!m_p_curve_net_) 
@@ -581,11 +581,11 @@ namespace Geex {
 		get_bbox(bbox[0],bbox[1],bbox[2],bbox[3],bbox[4],bbox[5]);
 	}
 
-	void APP_DataStructs::load_polygraph(const std::string& filename){
+	CS_INLINE void APP_DataStructs::load_polygraph(const std::string& filename){
 
 	}
 
-	void APP_DataStructs::save_polygraph(const std::string& filename){
+	CS_INLINE void APP_DataStructs::save_polygraph(const std::string& filename){
 
 	}
 
@@ -713,7 +713,7 @@ namespace Geex {
 		cs_log() << "end saving meshes."<<std::endl;
 	}
 
-	void APP_DataStructs::save_mesh(const std::string& filename) {
+	CS_INLINE void APP_DataStructs::save_mesh(const std::string& filename) {
 		std::string mesh_name = filename;
 		mesh_name.append(".obj");
 		if (m_init_mesh_)
@@ -725,7 +725,7 @@ namespace Geex {
 
 
 	// Helper function to convert Mesh3D to Eigen matrices for libigl
-	void mesh3d_to_eigen(Mesh3D* mesh, Eigen::MatrixXd& V, Eigen::MatrixXi& F) {
+	CS_INLINE void mesh3d_to_eigen(Mesh3D* mesh, Eigen::MatrixXd& V, Eigen::MatrixXi& F) {
 		if (!mesh || !mesh->is_valid()) {
 			V.resize(0, 3);
 			F.resize(0, 3);

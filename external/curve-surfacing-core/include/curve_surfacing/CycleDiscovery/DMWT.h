@@ -1,6 +1,7 @@
 #ifndef _DMWT_H_
 #define _DMWT_H_
-#include "tetgen.h"
+//#include "tetgen.h"
+#include "tetgen_include.h"   // tetgen.h without its generic macros (header-only mode)
 #include "Point3.h"
 #include "Vector3.h"
 #include "EdgeInfo.h"

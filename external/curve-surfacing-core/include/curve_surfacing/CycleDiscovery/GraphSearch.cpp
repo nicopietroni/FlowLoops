@@ -330,7 +330,7 @@ CS_INLINE double GraphSearch::computeGeneralHamiltonGraph(const Capacity &org1,
 }
 
 
-std::vector<std::vector<int> >  enumSets(const std::vector<int> &capacity,
+CS_INLINE std::vector<std::vector<int> >  enumSets(const std::vector<int> &capacity,
 										 const int &k)
 {
 	std::vector<std::vector<int> > res;
@@ -549,7 +549,7 @@ CS_INLINE void GraphSearch::computeGeneralHamiltonGraph(	const Capacity &capacit
 }
 
 
-std::vector<std::vector<int> > ordering(const std::vector<std::vector<int> > &data)
+CS_INLINE std::vector<std::vector<int> > ordering(const std::vector<std::vector<int> > &data)
 {
 	std::vector<std::vector<int> > rank(data.size(),std::vector<int>(data.size(),0));
 	for(int i=0;i<data.size();i++){

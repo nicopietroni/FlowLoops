@@ -8,7 +8,7 @@
 
 using namespace std;
 
-void DMWT::setDot(bool isdot1){
+CS_INLINE void DMWT::setDot(bool isdot1){
 	dot = isdot1? 1 : 2;
 }
 
@@ -41,7 +41,7 @@ CS_INLINE float DMWT::getSize(){
 	}
 }
 
-void DMWT::statistics(){
+CS_INLINE void DMWT::statistics(){
 	timeTotal = timePreprocess+timeMWT+timeTetgen;
 	if(!DO_EXP){
 		if(dot==1)	cout<<" [DOT1 DMWT]"<<endl;
@@ -82,7 +82,7 @@ that means eind is a boundary edge (i.e., at the beginning of the algorithm).
 The function returns the optimal tiling cost, and the index of the first triangle in the tiling 
 (adjacent to eind) in the triangle list of eind (-1 if eind is on the boundary).
 */
-bool DMWT::tileSegment(int eind, char side, int ti, float& thisCost, int& thisTile){
+CS_INLINE bool DMWT::tileSegment(int eind, char side, int ti, float& thisCost, int& thisTile){
 	float optCost = FLT_MAX, subCost=0.0, subCostSum;
 	int tnum, tind, tindofti=-1, ei, ejind, ejtnum;
 	int optTile = -1, subTile = -1;

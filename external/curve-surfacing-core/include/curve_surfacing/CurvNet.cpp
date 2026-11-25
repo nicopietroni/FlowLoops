@@ -1809,7 +1809,9 @@ CS_INLINE Mesh3D* CurvNet::combinePatchMeshes(const std::vector<Mesh3D*>& patch_
 	}
 	
 	// Helper function to remesh a single patch using the remesher library
-	CS_INLINE void remesh_patch(Mesh3D* patch_mesh, const std::vector<PolyGraph_Edge*>& cycle_edges, double resolution_multiplier = 1.5) {
+	// `target_length` > 0 is used as is; otherwise the target is
+	// `resolution_multiplier` x the mean segment length of the cycle's curves.
+	CS_INLINE void remesh_patch(Mesh3D* patch_mesh, const std::vector<PolyGraph_Edge*>& cycle_edges, double resolution_multiplier = 1.5, double target_length = 0.0) {
 		if (!patch_mesh || patch_mesh->get_num_of_faces() == 0) {
 			return;
 		}
@@ -1840,7 +1842,8 @@ CS_INLINE Mesh3D* CurvNet::combinePatchMeshes(const std::vector<Mesh3D*>& patch_
 			: 0.01;  // Fallback
 		
 		// Use boundary edge length as target (with optional multiplier)
-		double target_length = resolution_multiplier * avg_boundary_length;
+		if (target_length <= 0.0)
+			target_length = resolution_multiplier * avg_boundary_length;
 		
 		// Convert Mesh3D to Eigen matrices
 		int num_verts = patch_mesh->get_num_of_vertices();
@@ -1893,16 +1896,11 @@ CS_INLINE Mesh3D* CurvNet::combinePatchMeshes(const std::vector<Mesh3D*>& patch_
 		// Perform remeshing
 Geo::TriRemesh<double>(V, F, RemP);
 		
-		// Rebuild Mesh3D from remeshed data
-		// Delete all existing mesh elements
-		auto* old_verts = patch_mesh->get_vertices_list();
-		auto* old_edges = patch_mesh->get_edges_list();
-		auto* old_faces = patch_mesh->get_faces_list();
-		
-		// Clear lists (note: this doesn't delete the objects, just removes them from lists)
-		old_verts->clear();
-		old_edges->clear();
-		old_faces->clear();
+		// Rebuild Mesh3D from remeshed data. clear_data deletes every old
+		// vertex, edge and face (and the edge map) and drops the lists; the
+		// inserts below recreate them. Clearing the lists alone leaked all of
+		// it on every call.
+		patch_mesh->clear_data();
 		
 		// Insert new vertices
 		std::vector<HE_vert*> new_verts;
@@ -2160,7 +2158,8 @@ Geo::CleanMesh<double>::SolveNonManifoldByDeletingFaces(mesh_pos, mesh_faces);
 				          << " verts, " << patch_mesh->get_num_of_faces() << " faces)..." << std::flush;
 				
 				// Apply remeshing to the patch (replaces split_edge)
-				remesh_patch(patch_mesh, cycle_edges, kRemeshEdgeLenMultiplier);
+				//remesh_patch(patch_mesh, cycle_edges, kRemeshEdgeLenMultiplier, remesh_target_length_);
+				remesh_patch(patch_mesh, cycle_edges, remesh_edge_multiplier_, remesh_target_length_);
 
 				cs_log() << " done (" << patch_mesh->get_num_of_vertices()
 				          << " verts, " << patch_mesh->get_num_of_faces() << " faces)" << std::endl;
@@ -2322,6 +2321,40 @@ CS_INLINE Mesh3D* CurvNet::load_cycle_discovery_data_from_structures(
 		          << patch_data.num_vertices << " vertices and " 
 		          << patch_data.num_faces << " faces" << std::endl;
 		
+		if (remesh_patches_) {
+			// Through a patch mesh of its own, remeshed the way the auto path
+			// remeshes its own patches, then copied in. Vertex order is not
+			// preserved; the boundary vertices are (fix_borders).
+			Mesh3D* patch_mesh = new Mesh3D;
+			std::vector<HE_vert*> patch_vertices;
+			for (const auto& vertex : patch_data.vertices)
+				patch_vertices.push_back(patch_mesh->insert_vertex(const_cast<Eigen::Vector3d&>(vertex)));
+			for (const auto& face_vertices : patch_data.faces) {
+				std::vector<HE_vert*> face_vts;
+				for (int vid : face_vertices) face_vts.push_back(patch_vertices[vid]);
+				patch_mesh->insert_face(face_vts);
+			}
+			patch_mesh->update_mesh();
+			patch_mesh->update_normal();
+			//remesh_patch(patch_mesh, cycle_edges, kRemeshEdgeLenMultiplier, remesh_target_length_);
+			remesh_patch(patch_mesh, cycle_edges, remesh_edge_multiplier_, remesh_target_length_);
+			cs_log() << "Remeshed user-supplied patch " << cy_itr << " to "
+			          << patch_mesh->get_num_of_vertices() << " vertices and "
+			          << patch_mesh->get_num_of_faces() << " faces" << std::endl;
+
+			std::vector<HE_vert*> vertex_mapping;
+			for (HE_vert* v : *patch_mesh->get_vertices_list())
+				vertex_mapping.push_back(nmesh->insert_vertex(v->pos));
+			for (HE_face* f : *patch_mesh->get_faces_list()) {
+				std::vector<HE_vert*> face_vts;
+				for (HE_vert* v : f->get_vertices()) face_vts.push_back(vertex_mapping[v->id]);
+				HE_face* fh = nmesh->insert_face(face_vts);
+				if (fh) fh->curve_cycle = cur_cycle;
+			}
+			delete patch_mesh;  // its own elements; nmesh holds copies
+			continue;
+		}
+
 		const unsigned int vid_offset = nmesh->get_num_of_vertices();
 		
 		// Insert vertices
@@ -2422,9 +2455,39 @@ CS_INLINE void CurvNet::populateRMFFromNormalData(Mesh3D* patches, const NormalC
 			
 			// Collect normals for this curve's directed edges from the normal data
 			std::vector<Eigen::Vector3d> curve_normals;
-			for (int i = 0; i < num_curve_edges && normal_edge_idx < (int)cycle_normal_data.edges.size(); i++) {
-				curve_normals.push_back(cycle_normal_data.edges[normal_edge_idx].edge_normal.normalized());
-				normal_edge_idx++;
+			// for (int i = 0; i < num_curve_edges && normal_edge_idx < (int)cycle_normal_data.edges.size(); i++) {
+			// 	curve_normals.push_back(cycle_normal_data.edges[normal_edge_idx].edge_normal.normalized());
+			// 	normal_edge_idx++;
+			// }
+			// The normal file has one entry per boundary edge of the patch, the
+			// curve one entry per control-point segment: the two counts differ
+			// when the curves are subsampled (subsample_factor > 1), and taking
+			// num_curve_edges normals per curve shifted the normals onto the
+			// following curves. Consume instead up to the edge that ends on
+			// this curve's end point (in traversal direction); fall back to the
+			// old count when no such edge is found.
+			{
+				const int end_cp = pg_edge->order_ ? curve->m_cpoints.back() : curve->m_cpoints.front();
+				const Eigen::Vector3d end_pt = m_control_points[end_cp].head<3>();
+				double curve_len = 0.0;
+				for (int i = 0; i < num_curve_edges; i++)
+					curve_len += (m_control_points[curve->m_cpoints[i + 1]].head<3>() -
+					              m_control_points[curve->m_cpoints[i]].head<3>()).norm();
+				// well below one boundary edge, well above the 6-digit rounding of the files
+				const double end_tol = 0.1 * curve_len / num_curve_edges;
+
+				int last_idx = -1;
+				for (int k = normal_edge_idx; k < (int)cycle_normal_data.edges.size(); k++) {
+					if ((cycle_normal_data.edges[k].vertex2 - end_pt).norm() < end_tol) {
+						last_idx = k;
+						break;
+					}
+				}
+				const int num_take = (last_idx >= 0) ? (last_idx - normal_edge_idx + 1) : num_curve_edges;
+				for (int i = 0; i < num_take && normal_edge_idx < (int)cycle_normal_data.edges.size(); i++) {
+					curve_normals.push_back(cycle_normal_data.edges[normal_edge_idx].edge_normal.normalized());
+					normal_edge_idx++;
+				}
 			}
 			
 			if (curve_normals.empty()) continue;
@@ -2460,7 +2523,12 @@ CS_INLINE void CurvNet::populateRMFFromNormalData(Mesh3D* patches, const NormalC
 
 			// Use the same end-frame consistency idea as computeRMFonCurve to classify curve type.
 			// Transport n0 along the curve using double-reflection and compare with n1.
-			if (n0.norm() > 1e-12 && n1.norm() > 1e-12) {
+			// Or, when the caller vouches for its normals, skip the check: every
+			// curve keeps its constraint.
+			if (trust_normal_data_) {
+				pg_edge->curve_type = CURVE_TYPE::CRVT_LINE;
+				curves_marked_crvt++;
+			} else if (n0.norm() > 1e-12 && n1.norm() > 1e-12) {
 				n0.normalize();
 				n1.normalize();
 
@@ -2535,7 +2603,7 @@ CS_INLINE void CurvNet::populateRMFFromNormalData(Mesh3D* patches, const NormalC
 				double dotv = transported_r.dot(n1);
 				dotv = std::max(-1.0, std::min(1.0, dotv));
 				double theta = std::acos(dotv);
-				const double RMF_CONSISTENCY_ANGLE = 10.0 / 180.0 * M_PI;
+				const double RMF_CONSISTENCY_ANGLE = rmf_consistency_angle_deg_ / 180.0 * M_PI;
 
 				if (theta < RMF_CONSISTENCY_ANGLE || theta > M_PI - RMF_CONSISTENCY_ANGLE) {
 					pg_edge->curve_type = CURVE_TYPE::CRVT_LINE;
@@ -2559,7 +2627,8 @@ CS_INLINE void CurvNet::populateRMFFromNormalData(Mesh3D* patches, const NormalC
 				}
 				
 				// Map parametric position to nearest normal index (round instead of interpolate)
-				double normal_idx_float = t * (num_curve_edges - 1);
+				//double normal_idx_float = t * (num_curve_edges - 1);
+				double normal_idx_float = t * ((int)curve_normals.size() - 1);
 				int nearest_idx = std::max(0, std::min((int)std::round(normal_idx_float), (int)curve_normals.size() - 1));
 				
 				// Use the nearest normal directly - no interpolation
@@ -2815,7 +2884,8 @@ CS_INLINE Mesh3D* CurvNet::load_cycle_discovery_data_from_structures(
 			          << " verts, " << patch_mesh->get_num_of_faces() << " faces)..." << std::flush;
 			
 			// Apply remeshing to the patch
-			remesh_patch(patch_mesh, cycle_edges, kRemeshEdgeLenMultiplier);
+			//remesh_patch(patch_mesh, cycle_edges, kRemeshEdgeLenMultiplier, remesh_target_length_);
+			remesh_patch(patch_mesh, cycle_edges, remesh_edge_multiplier_, remesh_target_length_);
 
 			// ALTERNATIVE: Use Laplacian smoothing instead of remeshing
 			laplacian_smooth_patch(patch_mesh, 20, 0.8);  // 10 iterations, lambda=0.5

@@ -25,7 +25,7 @@ CS_INLINE void BSplineCurve::InitializeBSplineCurve()
 	weights=NULL;
 }
 
-void BSplineCurve::CleanBSplineCurve(){
+CS_INLINE void BSplineCurve::CleanBSplineCurve(){
 	if(Xcoeff!=NULL)
 		delete[] Xcoeff;
 	if(Ycoeff!=NULL)
@@ -46,23 +46,23 @@ void BSplineCurve::CleanBSplineCurve(){
 	InitializeBSplineCurve();
 }
 
-void BSplineCurve::ComputeBSplineCurve(){
+CS_INLINE void BSplineCurve::ComputeBSplineCurve(){
 	bspl_to_points(degree,l,Xcoeff,Ycoeff,Zcoeff,weights,knot,dense,Xpoints,Ypoints,Zpoints,&point_num);
 }
 
-int BSplineCurve::DEFAULT_DENSE=20;
-int BSplineCurve::MAX_CONTROL_POINTS=30;
+CS_INLINE int BSplineCurve::DEFAULT_DENSE=20;
+CS_INLINE int BSplineCurve::MAX_CONTROL_POINTS=30;
 
 CS_INLINE BSplineCurve::BSplineCurve() : weights(NULL)
 {
 	this->InitializeBSplineCurve();
 }
 
-BSplineCurve::~BSplineCurve(){
+CS_INLINE BSplineCurve::~BSplineCurve(){
 	this->CleanBSplineCurve();
 }
 
-void bspl_to_points(int degree,int l,double xcoeff[],double ycoeff[],double zcoeff[],double weights[],double knot[],int dense,double xpoints[],double ypoints[],double zpoints[],int *point_num)
+CS_INLINE void bspl_to_points(int degree,int l,double xcoeff[],double ycoeff[],double zcoeff[],double weights[],double knot[],int dense,double xpoints[],double ypoints[],double zpoints[],int *point_num)
 {
 	int i,ii;
 	double u;
@@ -99,7 +99,7 @@ void bspl_to_points(int degree,int l,double xcoeff[],double ycoeff[],double zcoe
 	}
 }
 
-double deboor(int degree,double coeff[],double knot[],double u,int i)
+CS_INLINE double deboor(int degree,double coeff[],double knot[],double u,int i)
 {
 	int k,j;
 	double t1,t2;
@@ -117,7 +117,7 @@ double deboor(int degree,double coeff[],double knot[],double u,int i)
 	return coeffa[i];
 }
 
-void knot_insertion(int &n_points,int degree,int index,double value,double coeff[],double knot[])
+CS_INLINE void knot_insertion(int &n_points,int degree,int index,double value,double coeff[],double knot[])
 {
 	int start=index-degree;
 	double newcoeff[30];

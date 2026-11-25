@@ -7,13 +7,20 @@
 
 #include <unordered_map>
 #include <smooth_mesh.h>   // TracingFieldLib: Geo::SmoothLaplacian
+#ifdef CS_USE_DIRECTIONAL
 #include <directional/principal_matching.h>
 #include <directional/TriMesh.h>
 #include <directional/IntrinsicFaceTangentBundle.h>
 #include <directional/power_field.h>
 #include <directional/CartesianField.h>
 #include <directional/power_to_raw.h>
+#else
+// cross field from TracingFieldLib (no Directional dependency)
+#include <normal.h>
+#include <smooth_cross_field.h>
+#endif
 
+#ifdef CS_USE_DIRECTIONAL
 // CrossfieldCache owns its Directional members on the heap so the header
 // can forward-declare those types without pulling in directional/ headers.
 inline CrossfieldCache::CrossfieldCache()
@@ -30,7 +37,7 @@ inline CrossfieldCache::~CrossfieldCache()
 
 
 // Function to generate a proper 4-RoSy crossfield using Directional
-directional::IntrinsicFaceTangentBundle generateDirectionalCrossfield(Geex::Mesh3D* mesh, directional::IntrinsicFaceTangentBundle& tb, directional::TriMesh& triMesh) {
+CS_INLINE directional::IntrinsicFaceTangentBundle generateDirectionalCrossfield(Geex::Mesh3D* mesh, directional::IntrinsicFaceTangentBundle& tb, directional::TriMesh& triMesh) {
     // Convert Mesh3D to Eigen matrices
     auto* verts = mesh->get_vertices_list();
     auto* faces_list = mesh->get_faces_list();
@@ -151,7 +158,7 @@ directional::IntrinsicFaceTangentBundle generateDirectionalCrossfield(Geex::Mesh
 }
 
 // Optimized version that caches mesh structures between iterations
-directional::IntrinsicFaceTangentBundle generateDirectionalCrossfieldOptimized(
+CS_INLINE directional::IntrinsicFaceTangentBundle generateDirectionalCrossfieldOptimized(
     Geex::Mesh3D* mesh, CrossfieldCache& cache) {
 
     // Initialize cache members explicitly
@@ -304,8 +311,85 @@ directional::IntrinsicFaceTangentBundle generateDirectionalCrossfieldOptimized(
 }
 
 static double clamped_cot(const Eigen::Vector3d& a, const Eigen::Vector3d& b);
+#else
+// 4-RoSy cross field of the mesh, smoothest field aligned to the boundary
+// (TracingFieldLib SmoothGlobalPolyvector, as the Directional power field
+// constrained on the boundary faces used before). It sets, per face, theta[k]
+// = angle of the k-th direction in the face edge basis (the one used by
+// HE_face::get_cross_axis and by fit_curvature_tensor without a tangent
+// bundle), and per half-edge the period jump pij (only its parity is used:
+// whether direction 0 of a face matches direction 0 or 1 of the other).
+CS_INLINE void generateCrossfield(Geex::Mesh3D* mesh) {
+    auto* verts = mesh->get_vertices_list();
+    auto* faces_list = mesh->get_faces_list();
+    const int num_vertices = verts->size();
+    const int num_faces = faces_list->size();
 
-void facet_differential(const Geex::Mesh3D* pmesh, const Geex::HE_face* face,
+    std::vector<Geo::Point3<double>> VertPos(num_vertices);
+    for (int i = 0; i < num_vertices; ++i)
+        VertPos[i] = Geo::Point3<double>((*verts)[i]->pos.x(),
+                                         (*verts)[i]->pos.y(),
+                                         (*verts)[i]->pos.z());
+    std::vector<std::vector<int>> Faces(num_faces);
+    for (int i = 0; i < num_faces; ++i) {
+        auto face_verts = (*faces_list)[i]->get_vertices();
+        for (int j = 0; j < 3; ++j)
+            Faces[i].push_back(face_verts[j]->id);
+    }
+
+    std::vector<Geo::Point3<double>> FaceNormals, VertNormals;
+    Geo::ComputeNormals(VertPos, Faces, FaceNormals, VertNormals);
+
+    // only the boundary faces are constrained (align_borders); no curvature
+    // alignment (all the qualities are 0), the weight is the smoothness one
+    std::vector<Field::CrossF<double>> FaceCurv(num_faces);
+    FieldSmoothParam<double> SP;
+    SP.NDir = 4;
+    SP.align_borders = true;
+    SP.GlobalSmoothVal = 1;
+    SmoothGlobalPolyvector(VertPos, Faces, FaceNormals, FaceCurv, SP);
+
+    // angles in the face edge basis
+    for (int fi = 0; fi < num_faces; ++fi) {
+        Geex::HE_face* f = (*faces_list)[fi];
+        Eigen::Vector3d faxis = (f->edge->vert->pos - f->edge->prev->vert->pos);
+        Eigen::Vector3d fn = f->normal;
+        if (fn.squaredNorm() > 1e-16) fn.normalize();
+        if (faxis.squaredNorm() < 1e-24) faxis = fn.unitOrthogonal();
+        faxis.normalize();
+        Eigen::Vector3d binormal = fn.cross(faxis).normalized();
+        Eigen::Vector3d d0(FaceCurv[fi].D[0].X, FaceCurv[fi].D[0].Y,
+                           FaceCurv[fi].D[0].Z);
+        double theta0 = 0.0;
+        if (d0.squaredNorm() > 1e-18)
+            theta0 = std::atan2(d0.dot(binormal), d0.dot(faxis));
+        for (int k = 0; k < 4; ++k)
+            f->theta[k] = theta0 + k * 0.5 * M_PI;
+    }
+
+    // period jump parity between adjacent faces
+    for (int fi = 0; fi < num_faces; ++fi) {
+        Geex::HE_face* f = (*faces_list)[fi];
+        Geex::HE_edge* start = f->edge;
+        Geex::HE_edge* eh = start;
+        do {
+            if (eh->pair && eh->pair->face) {
+                int fj = eh->pair->face->id;
+                if ((fj >= 0) && (fj < num_faces)) {
+                    double d00 = std::fabs(Geo::Dot(FaceCurv[fi].D[0],
+                                                    FaceCurv[fj].D[0]));
+                    double d01 = std::fabs(Geo::Dot(FaceCurv[fi].D[0],
+                                                    FaceCurv[fj].D[1]));
+                    eh->pij = (d00 >= d01) ? 0 : 1;
+                }
+            }
+            eh = eh->next;
+        } while (eh != start);
+    }
+}
+#endif
+
+CS_INLINE void facet_differential(const Geex::Mesh3D* pmesh, const Geex::HE_face* face,
     const Eigen::Vector3d& u_axis, const Eigen::Vector3d& v_axis, std::vector<Eigen::Vector2d>& dx_list, std::vector<Eigen::Vector2d>& dn_list, const Geex::HE_face* prev_face) {
 
     Geex::HE_edge* eh = face->edge;
@@ -390,7 +474,8 @@ void facet_differential(const Geex::Mesh3D* pmesh, const Geex::HE_face* face,
 }
 
 
-void fit_curvature_tensor(Geex::Mesh3D* p_mesh, bool use_cross_field, directional::IntrinsicFaceTangentBundle* tb) {
+#ifdef CS_USE_DIRECTIONAL
+CS_INLINE void fit_curvature_tensor(Geex::Mesh3D* p_mesh, bool use_cross_field, directional::IntrinsicFaceTangentBundle* tb) {
     //compute best fit curvature tensor per face.
     int processed_count = 0;
     int skipped_count = 0;
@@ -516,8 +601,139 @@ void fit_curvature_tensor(Geex::Mesh3D* p_mesh, bool use_cross_field, directiona
         }
     }
 }
+#else
+// the axes from theta[0] in the face edge basis (generateCrossfield)
+CS_INLINE void fit_curvature_tensor(Geex::Mesh3D* p_mesh, bool use_cross_field) {
+    //compute best fit curvature tensor per face.
+    int processed_count = 0;
+    int skipped_count = 0;
 
-void smooth_curvature_variation(Geex::Mesh3D* p_mesh, double curvature_smooth_weight_, Geex::LeastSquaresSolverType solver_type, double boundary_anchor_weight) {
+    for (int fitr = 0; fitr < p_mesh->get_num_of_faces(); fitr++)
+    {
+        Geex::HE_face* fh = p_mesh->get_face(fitr);
+
+        if (!fh->tag) {
+            skipped_count++;
+            continue;
+        }
+        processed_count++;
+
+        //initialize.
+        fh->tensor_axis[0] = Eigen::Vector3d(0,0,0);
+        fh->tensor_axis[1] = Eigen::Vector3d(0,0,0);
+        fh->tensor_diag[0] = 0;
+        fh->tensor_diag[1] = 0;
+
+        // old edge-based fallback basis (kept for fallback)
+        Eigen::Vector3d faxis = (fh->edge->vert->pos - fh->edge->prev->vert->pos).normalized();
+        Eigen::Vector3d fn = Eigen::Vector3d(fh->normal.x(), fh->normal.y(), fh->normal.z());
+        if (fn.squaredNorm() > 1e-16) fn.normalize();
+        Eigen::Vector3d binormal = fn.cross(faxis).normalized();
+
+        Eigen::Vector3d u_axis(0,0,0), v_axis(0,0,0);
+
+        // (the Directional tangent bundle basis is not available: always the
+        // face edge basis, in which generateCrossfield computes theta)
+//         if (use_cross_field && tb != nullptr) {
+//             // Use TB basis (FBx, FBy) and face theta to construct u/v in world coords
+//             Eigen::Vector3d b1 = tb->mesh->FBx.row(fitr).transpose();
+//             Eigen::Vector3d b2 = tb->mesh->FBy.row(fitr).transpose();
+
+//             // defensive normalization
+//             if (b1.squaredNorm() > 1e-16) b1.normalize();
+//             if (b2.squaredNorm() > 1e-16) b2.normalize();
+
+//             // enforce right-handedness: (b1 x b2) should agree with face normal
+//             if (b1.cross(b2).dot(fn) < 0.0) {
+//                 b2 = -b2;
+//             }
+
+//             // build u/v from theta (same basis used to compute theta)
+//             double phi = fh->theta[0];
+//             u_axis = (std::cos(phi) * b1 + std::sin(phi) * b2);
+//             v_axis = (std::cos(phi + 0.5 * M_PI) * b1 + std::sin(phi + 0.5 * M_PI) * b2);
+
+//             // project to tangent plane & normalize
+//             u_axis -= fn.dot(u_axis) * fn;
+//             v_axis -= fn.dot(v_axis) * fn;
+//             if (u_axis.squaredNorm() > 1e-16) u_axis.normalize();
+//             if (v_axis.squaredNorm() > 1e-16) v_axis.normalize();
+//         }
+        if (true)
+        {
+            // fallback: original behavior (edge-based axes)
+            if (faxis.squaredNorm() < 1e-12) { // safe fallback if degenerate
+                faxis = fn.unitOrthogonal();
+            }
+            faxis.normalize();
+            binormal = fn.cross(faxis).normalized();
+
+            if (use_cross_field) {
+                double cos_theta = std::cos(fh->theta[0]), sin_theta = std::sin(fh->theta[0]);
+                u_axis = cos_theta * faxis + sin_theta * binormal;
+                v_axis = -sin_theta * faxis + cos_theta * binormal;
+            } else {
+                u_axis = faxis;
+                v_axis = binormal;
+            }
+
+            // project to tangent and normalize
+            u_axis -= fn.dot(u_axis) * fn; if (u_axis.squaredNorm() > 1e-16) u_axis.normalize();
+            v_axis -= fn.dot(v_axis) * fn; if (v_axis.squaredNorm() > 1e-16) v_axis.normalize();
+        }
+
+        std::vector<Eigen::Vector2d> dx_list, dn_list;
+
+        double lambda_1 = 0, lambda_2 = 0;
+
+        facet_differential(p_mesh, fh, u_axis, v_axis, dx_list, dn_list);
+
+        if (dx_list.size() >= 2)
+        {
+            if (use_cross_field)
+            {
+                // given cross field, the unkowns are the diagonal entries of tensor in u/v basis.
+                Eigen::MatrixXd mat_A((int)dx_list.size(), 2);
+                Eigen::VectorXd rhs_b((int)dx_list.size());
+
+                for (int dx_itr = 0; dx_itr < (int)dx_list.size(); dx_itr++)
+                {
+                    Eigen::Vector2d u_dx = dx_list[dx_itr].normalized();
+                    mat_A(dx_itr, 0) = u_dx.x() * dx_list[dx_itr].x();
+                    mat_A(dx_itr, 1) = u_dx.y() * dx_list[dx_itr].y();
+                    rhs_b(dx_itr) = u_dx.dot(dn_list[dx_itr]);
+                }
+
+                Eigen::Matrix2d mat_AtA = mat_A.transpose() * mat_A;
+                Eigen::Vector2d vec_Atb = mat_A.transpose() * rhs_b;
+
+                // Regularize for stability
+                double reg = 1e-12;
+                mat_AtA += reg * Eigen::Matrix2d::Identity();
+
+                Eigen::Vector2d lambdas = mat_AtA.ldlt().solve(vec_Atb);
+                lambda_1 = lambdas(0);
+                lambda_2 = lambdas(1);
+
+                // store world-space tensor axes & diag
+                fh->tensor_axis[0] = Eigen::Vector3d(u_axis.x(), u_axis.y(), u_axis.z());
+                fh->tensor_axis[1] = Eigen::Vector3d(v_axis.x(), v_axis.y(), v_axis.z());
+                fh->tensor_diag[0] = lambda_1;
+                fh->tensor_diag[1] = lambda_2;
+            }
+        }
+
+        else {
+            fh->tensor_axis[0] = u_axis;
+            fh->tensor_axis[1] = v_axis;
+            fh->tensor_diag[0] = 0.00001;
+            fh->tensor_diag[1] = 0.00001;
+        }
+    }
+}
+#endif
+
+CS_INLINE void smooth_curvature_variation(Geex::Mesh3D* p_mesh, double curvature_smooth_weight_, Geex::LeastSquaresSolverType solver_type, double boundary_anchor_weight) {
     Geex::cs_log() << "  Starting curvature smoothing with weight " << curvature_smooth_weight_;
     if (solver_type == Geex::LeastSquaresSolverType::CHOLESKY) {
         Geex::cs_log() << " (Cholesky solver)..." << std::endl;
@@ -771,7 +987,7 @@ static double clamped_cot(const Eigen::Vector3d& a, const Eigen::Vector3d& b)
     return std::max(-kCotClamp, std::min(kCotClamp, cot));
 }
 
-std::vector<Geex::LinearConstraint<double>> edgecurv_fillmatrix(Geex::HE_edge* edge, Eigen::Vector3d target_curvnorm, double coeff){
+CS_INLINE std::vector<Geex::LinearConstraint<double>> edgecurv_fillmatrix(Geex::HE_edge* edge, Eigen::Vector3d target_curvnorm, double coeff){
 
     Geex::HE_vert* vts_list[4];
 
@@ -832,7 +1048,7 @@ std::vector<Geex::LinearConstraint<double>> edgecurv_fillmatrix(Geex::HE_edge* e
 }
 
 //debugging by visualising varids
-std::vector<Geex::LinearConstraint<double>> fillmatrix_normalConstraint(Geex::HE_edge* edge, std::vector<Geex::HE_vert*>& selected_vertices){
+CS_INLINE std::vector<Geex::LinearConstraint<double>> fillmatrix_normalConstraint(Geex::HE_edge* edge, std::vector<Geex::HE_vert*>& selected_vertices){
     std::vector<Geex::LinearConstraint<double>> constraints;
     if (edge && edge->face && edge->cycle_curv && (edge->cycle_curv->curve_type == Geex::CURVE_TYPE::CRVT_LINE || edge->cycle_curv->curve_type == Geex::CURVE_TYPE::TRIM_LINE))
     {
@@ -853,7 +1069,9 @@ std::vector<Geex::LinearConstraint<double>> fillmatrix_normalConstraint(Geex::HE
             constr.RHSide = rhs[row] * coeff;
             if (vh->var_id >= 0) {
                 // Each constraint couples x, y, z of the vertex
-                selected_vertices.push_back(vh);
+                // vh is already a variable (var_id >= 0): pushing it again only
+                // grew the caller's selection with duplicates, 3 per edge
+                //selected_vertices.push_back(vh);
                 for (int col = 0; col < 3; ++col) {
                     Geex::VarTerm<double> var(vh->var_id, col, lhs[row][col]);
                     constr.LHSide.push_back(var);
@@ -867,7 +1085,7 @@ std::vector<Geex::LinearConstraint<double>> fillmatrix_normalConstraint(Geex::HE
 }
 
 
-Eigen::Vector3d compute_target_curvature(Geex::HE_edge* eh)
+CS_INLINE Eigen::Vector3d compute_target_curvature(Geex::HE_edge* eh)
 {
     Eigen::Vector2d dx0(eh->ortho_dual.dot(eh->face->tensor_axis[0]), eh->ortho_dual.dot(eh->face->tensor_axis[1]));
     Eigen::Vector2d dn0(eh->face->tensor_diag[0] * dx0[0], eh->face->tensor_diag[1] * dx0[1]);
@@ -924,7 +1142,7 @@ inline bool edge_on_sharp_feature_curve(const Geex::HE_edge* eh)
 // Returns the average vertex displacement of this update (used by callers to
 // implement the paper's termination criterion: stop when the average movement
 // is below 0.1% of the bounding-box diagonal).
-double update_vertex_positions(Geex::Mesh3D* p_mesh, std::vector<Geex::HE_vert*> map_var_vtx, const std::vector<double>& solution)
+CS_INLINE double update_vertex_positions(Geex::Mesh3D* p_mesh, std::vector<Geex::HE_vert*> map_var_vtx, const std::vector<double>& solution)
 {
     double avg_delta = 0.0;
     int valid_count = 0;
@@ -967,7 +1185,7 @@ double update_vertex_positions(Geex::Mesh3D* p_mesh, std::vector<Geex::HE_vert*>
     return avg_delta;
 }
 
-void tfl_surface_relaxation(Geex::Mesh3D* p_mesh,
+CS_INLINE void tfl_surface_relaxation(Geex::Mesh3D* p_mesh,
                             const std::vector<Geex::HE_vert*>& selected,
                             bool slide_curves)
 {
@@ -1057,7 +1275,7 @@ void tfl_surface_relaxation(Geex::Mesh3D* p_mesh,
     }
 }
 
-void tangential_relaxation(Geex::Mesh3D* p_mesh,
+CS_INLINE void tangential_relaxation(Geex::Mesh3D* p_mesh,
                            const std::vector<Geex::HE_vert*>& selected,
                            int passes, double step)
 {
@@ -1116,7 +1334,7 @@ void tangential_relaxation(Geex::Mesh3D* p_mesh,
     }
 }
 
-void laplacian_fairing(Geex::Mesh3D* p_mesh,
+CS_INLINE void laplacian_fairing(Geex::Mesh3D* p_mesh,
                        double deviation_weight,
                        Geex::LeastSquaresSolverType solver_type,
                        const std::vector<Geex::HE_vert*>& selected)
@@ -1201,13 +1419,15 @@ void laplacian_fairing(Geex::Mesh3D* p_mesh,
 }
 
 // This version automatically finds free vertices according to logic by Hao
-bool match_target_curvature(
+CS_INLINE bool match_target_curvature(
     Geex::Mesh3D* p_mesh,
     std::vector<double>& v_residuals_out,
     std::vector<double>& m_residual_out,
     std::vector<double>& c_residual_out,
     std::vector<Geex::HE_vert*>& selected_vertices,
-    double* avg_movement_out
+    double* avg_movement_out,
+    int* solver_iterations_out,
+    double* solver_error_out
 ){
 
     // Determine free vertices
@@ -1216,18 +1436,28 @@ bool match_target_curvature(
     // If selected_vertices is specified, use only those vertices
     // Otherwise, use all vertices that are not on boundary or curve
     if (!selected_vertices.empty()) {
-        // Use only the provided selected vertices
+        // // Use only the provided selected vertices
+        // for (Geex::HE_vert* vh : selected_vertices) {
+        //     if (vh) {
+        //         vh->var_id = map_var_vtx.size();
+        //         map_var_vtx.push_back(vh);
+        //     }
+        // }
+        // // Mark all other vertices as non-variable
+        // for (int vitr = 0; vitr < p_mesh->get_num_of_vertices(); vitr++) {
+        //     Geex::HE_vert* vh = p_mesh->get_vertex(vitr);
+        //     if (std::find(selected_vertices.begin(), selected_vertices.end(), vh) == selected_vertices.end()) {
+        //         vh->var_id = -1;
+        //     }
+        // }
+        // Same result without the O(nv * nselected) std::find:
+        // first mark everything non-variable, then number the selection
+        for (int vitr = 0; vitr < p_mesh->get_num_of_vertices(); vitr++)
+            p_mesh->get_vertex(vitr)->var_id = -1;
         for (Geex::HE_vert* vh : selected_vertices) {
             if (vh) {
                 vh->var_id = map_var_vtx.size();
                 map_var_vtx.push_back(vh);
-            }
-        }
-        // Mark all other vertices as non-variable
-        for (int vitr = 0; vitr < p_mesh->get_num_of_vertices(); vitr++) {
-            Geex::HE_vert* vh = p_mesh->get_vertex(vitr);
-            if (std::find(selected_vertices.begin(), selected_vertices.end(), vh) == selected_vertices.end()) {
-                vh->var_id = -1;
             }
         }
     } else {
@@ -1307,6 +1537,8 @@ bool match_target_curvature(
 
     double energy = 0.0;
     bool converged = solver.solve_system(solution);
+    if (solver_iterations_out) *solver_iterations_out = solver.last_iterations();
+    if (solver_error_out) *solver_error_out = solver.last_error();
     if (!converged) {
         return false;  // Solver failed to converge
     }

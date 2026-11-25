@@ -115,6 +115,9 @@ namespace directional
         isinTree(primalTreeEdges(i)) = 1;
       }
       
+      // allocated once: zeroing an EF.rows() vector for every non-tree edge
+      // made this loop O(#edges^2); the entries touched are reset below
+      VectorXi visitedOnce = VectorXi::Zero(EF.rows());
       for (int i = 0; i < isinTree.size(); i++) {
         if (isinTree(i))
           continue;
@@ -126,7 +129,7 @@ namespace directional
         std::vector<Triplet<double> > candidateTriplets;
         //candidateTriplets.push_back(Triplet<double>(0, i, 1.0));
         Vector2i currLeaves; currLeaves << EF(i, 0), EF(i, 1);
-        VectorXi visitedOnce = VectorXi::Zero(EF.rows());  //used to remove the tail from the LCA to the root
+        //VectorXi visitedOnce = VectorXi::Zero(EF.rows());  //used to remove the tail from the LCA to the root
         bool isBoundaryCycle=true;
         for (int i = 0; i < 2; i++) { //on leaves
           int currTreeEdge = -1;  //indexing within dualTreeEdges
@@ -153,8 +156,13 @@ namespace directional
           if ((visitedOnce(candidateTriplets[i].col()))&&(pureInnerEdgeMask(candidateTriplets[i].col())))
             isBoundaryCycle=false;
         
-        if (isBoundaryCycle)
+        // if (isBoundaryCycle)
+        //   continue; //ignoring those
+        if (isBoundaryCycle) {
+          for (size_t c = 0; c < candidateTriplets.size(); c++)
+            visitedOnce(candidateTriplets[c].col()) = 0;
           continue; //ignoring those
+        }
         
         int currRow = (isBoundaryCycle ? numV+currBoundaryCycle : numV+currGeneratorCycle);
         (isBoundaryCycle ? currBoundaryCycle++ : currGeneratorCycle++);
@@ -165,6 +173,9 @@ namespace directional
             Triplet<double> trueTriplet(currRow,candidateTriplets[i].col(), candidateTriplets[i].value());
             basisCycleTriplets.push_back(trueTriplet);
           }
+        // reset for the next cycle
+        for (size_t c = 0; c < candidateTriplets.size(); c++)
+          visitedOnce(candidateTriplets[c].col()) = 0;
       }
       //assert(currBoundaryCycle==numBoundaries && currGeneratorCycle==numGenerators);
     }

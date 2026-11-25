@@ -133,12 +133,18 @@ namespace AML {
 	GEN_OP_EQUALS(*,S)\
 	GEN_OP_EQUALS(/,S)
 
+// The components are a union of the named members with an array, so that
+// operator[] and begin()/end() index a real array. The previous form,
+// `(&x)[nIndex]`, is pointer arithmetic past a single member: undefined
+// behaviour that clang at -O2 actually exploits (computeTransportMatrixAll
+// came out wrong and cycle discovery found no arcs), while -O0 and -O3
+// happened to work.
 #define PARTIAL_VEC_OPS(S) \
-	inline T &operator[](size_t nIndex){ return (&x)[nIndex];}\
-    inline T operator[](size_t nIndex)const{return (&x)[nIndex];}\
+	inline T &operator[](size_t nIndex){ return v_[nIndex];}\
+    inline T operator[](size_t nIndex)const{return v_[nIndex];}\
 	typedef T* iter;\
-	iter begin(){ return &x;}\
-	iter end(){   return begin()+S;}
+	iter begin(){ return v_;}\
+	iter end(){   return v_+S;}
 
 template <class T,unsigned int S> 
 class vec
@@ -159,20 +165,20 @@ private:
 template <class T> 
 class vec<T,2>{
 public:
-    vec(T s0,T s1):x(s0),y(s1){}
+    vec(T s0,T s1){x=s0;y=s1;}
     ALL_VEC_OPS(2);
 	PARTIAL_VEC_OPS(2);
 	inline void set(T fX,T fY){
 		x=fX;y=fY;
 	}
 	//
-    T x,y;
+    union { struct { T x,y; }; T v_[2]; };
 };
 
 template <class T> 
 class vec<T,3>{
 public:
-    vec(T s0,T s1,T s2):x(s0),y(s1),z(s2){}
+    vec(T s0,T s1,T s2){x=s0;y=s1;z=s2;}
     ALL_VEC_OPS(3);
 	PARTIAL_VEC_OPS(3);
     
@@ -185,17 +191,17 @@ public:
 						x*v.y-y*v.x);
 	}
 	//
-    T x,y,z;
+    union { struct { T x,y,z; }; T v_[3]; };
 };
 
 template <class T> 
 class vec<T,4>{
 public:
-    vec(T s0,T s1,T s2,T s3):x(s0),y(s1),z(s2),w(s3){}
+    vec(T s0,T s1,T s2,T s3){x=s0;y=s1;z=s2;w=s3;}
 	ALL_VEC_OPS(4);
 	PARTIAL_VEC_OPS(4);
     //
-    T x,y,z,w;
+    union { struct { T x,y,z,w; }; T v_[4]; };
 };
 
 

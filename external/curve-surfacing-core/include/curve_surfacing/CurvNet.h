@@ -237,6 +237,15 @@ namespace Geex {
 
 		PolyGraph* m_p_polygraph_;
 
+		// Knobs the entry point copies out of CurveSurfacingParams before
+		// loading; see the comments there. Members rather than arguments so
+		// the four load overloads keep their signatures.
+		double remesh_target_length_     = 0.0;   // <= 0: remesh_edge_multiplier_ x mean segment length
+		double remesh_edge_multiplier_   = 1.5;   // was the constant kRemeshEdgeLenMultiplier
+		bool   remesh_patches_           = false; // remesh user-supplied patches too
+		double rmf_consistency_angle_deg_ = 10.0;
+		bool   trust_normal_data_        = false;
+
 	public:
 		CurvNet();
 		~CurvNet();

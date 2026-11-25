@@ -10,7 +10,7 @@ includes were taken. Upstream licenses are kept alongside the code they cover.
 | Directory | Upstream | Pinned at | License |
 |---|---|---|---|
 | `tracingfieldlib/` | [nicopietroni/TracingFieldLib](https://github.com/nicopietroni/TracingFieldLib) (private) | `3b82519` | Non-Commercial (see `tracingfieldlib/LICENSE`) |
-| `curve-surfacing-core/` | [Edisuism/CurveSurfacingLib-V2](https://github.com/Edisuism/CurveSurfacingLib-V2), `Curve-Surfacing-Core/` | `5ae2248` | Research / non-commercial — see upstream [`NOTICE.md`](https://github.com/Edisuism/CurveSurfacingLib-V2/blob/main/NOTICE.md) |
+| `curve-surfacing-core/` | [Edisuism/CurveSurfacingLib-V2](https://github.com/Edisuism/CurveSurfacingLib-V2), `Curve-Surfacing-Core/` | `7604729` | Research / non-commercial — see upstream [`NOTICE.md`](https://github.com/Edisuism/CurveSurfacingLib-V2/blob/main/NOTICE.md) |
 | `curve-surfacing-core/external/Directional/` | [avaxman/Directional](https://github.com/avaxman/Directional) | vendored via Curve-Surfacing-Core | MPL-2.0 |
 | `eigen-3.4.0/` | [Eigen 3.4.0](https://eigen.tuxfamily.org) | 3.4.0 | MPL-2.0 |
 | `libigl/` | [libigl/libigl](https://github.com/libigl/libigl) | 2.4.0 | MPL-2.0 |

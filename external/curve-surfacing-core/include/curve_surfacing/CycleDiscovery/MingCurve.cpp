@@ -6,7 +6,7 @@
 #include "../cs_logging.h"
 
 #include <algorithm>
-MingCurve::MingCurve(const char *file, int limit, bool hasNorm){
+CS_INLINE MingCurve::MingCurve(const char *file, int limit, bool hasNorm){
 	numofpoints = 0; PT_LIMIT = limit; EXPSTOP = false; withNorm = hasNorm;isDeGen=false; badInput=false;perturbNum=0;
 	points = nullptr; DeGenPoints = nullptr; normals = nullptr; filename = nullptr;
 	has_planar_triangulation = false;
@@ -23,7 +23,7 @@ MingCurve::MingCurve(const char *file, int limit, bool hasNorm){
 
 }
 
-MingCurve::MingCurve(const double* inCurve,const int inNum, int limit, bool hasNorm){
+CS_INLINE MingCurve::MingCurve(const double* inCurve,const int inNum, int limit, bool hasNorm){
 	numofpoints = 0; PT_LIMIT = limit; EXPSTOP = false; withNorm = hasNorm;isDeGen=false;badInput=false;perturbNum=0;
 	points = nullptr; DeGenPoints = nullptr; normals = nullptr; filename = nullptr;
 	has_planar_triangulation = false;
@@ -34,7 +34,7 @@ MingCurve::MingCurve(const double* inCurve,const int inNum, int limit, bool hasN
 	loadOrgCurve(inCurve, inNum);
 }
 
-MingCurve::MingCurve(const double* inCurve,const float* inNorm, const int inNum, int limit, bool hasNorm){
+CS_INLINE MingCurve::MingCurve(const double* inCurve,const float* inNorm, const int inNum, int limit, bool hasNorm){
 	numofpoints = 0; PT_LIMIT = limit; EXPSTOP = false; withNorm = hasNorm;isDeGen=false; badInput=false;perturbNum=0;
 	points = nullptr; DeGenPoints = nullptr; normals = nullptr; filename = nullptr;
 	has_planar_triangulation = false;
@@ -48,7 +48,7 @@ MingCurve::MingCurve(const double* inCurve,const float* inNorm, const int inNum,
 	}
 }
 
-MingCurve::~MingCurve(){
+CS_INLINE MingCurve::~MingCurve(){
 	if (filename) delete [] filename;
 	if (points) delete [] points;
 	if (DeGenPoints) delete [] DeGenPoints;
@@ -64,7 +64,7 @@ CS_INLINE float* MingCurve::getNormal() { return normals; }
 //=====================================File IO==================================//
 // Read in curve files before edge protection, 
 // store curve/adj index/norm index information in tempC/tempAdj/tempNorm //
-bool MingCurve::readOrgCurveFile(const char* file){
+CS_INLINE bool MingCurve::readOrgCurveFile(const char* file){
 	org_n = 0;
 	
 	filename = new char[300]; 
@@ -104,7 +104,7 @@ bool MingCurve::readOrgCurveFile(const char* file){
 
 // Read in curve files before edge protection, 
 // store curve/adj index/norm index information in tempC/tempAdj/tempNorm //
-bool MingCurve::loadOrgCurve(const double* inCurve,const int inNum){
+CS_INLINE bool MingCurve::loadOrgCurve(const double* inCurve,const int inNum){
 	const char* file = "null.curve";
 	filename = new char[300]; 
 	strcpy(filename, file);
@@ -131,7 +131,7 @@ bool MingCurve::loadOrgCurve(const double* inCurve,const int inNum){
 	return 1;
 }
 
-void MingCurve::readOrgNormFile(){
+CS_INLINE void MingCurve::readOrgNormFile(){
 	char * normfile = new char[300];
 	strcpy(normfile, filename);
 	strcat(normfile, ".normal");
@@ -159,7 +159,7 @@ void MingCurve::readOrgNormFile(){
 	withNorm = true;
 }
 
-void MingCurve::loadOrgNorm(const float* inNorm){
+CS_INLINE void MingCurve::loadOrgNorm(const float* inNorm){
 	numofnormals = org_n;
 	//read normal set data
 	for (int i=0; i<numofnormals; i++) {
@@ -172,7 +172,7 @@ void MingCurve::loadOrgNorm(const float* inNorm){
 	withNorm = true;
 }
 
-void MingCurve::saveCurve(const char* curvefilein, double* pts, int num){
+CS_INLINE void MingCurve::saveCurve(const char* curvefilein, double* pts, int num){
 	char * newcurvefile = new char[300];
 	strcpy(newcurvefile, curvefilein);
 	strcat(newcurvefile, ".EP.curve");
@@ -187,7 +187,7 @@ void MingCurve::saveCurve(const char* curvefilein, double* pts, int num){
 	writer.close();
 }
 //=====================================Get Measures==================================//
-double MingCurve::getAngle(int p1, int p2, int p3){
+CS_INLINE double MingCurve::getAngle(int p1, int p2, int p3){
 	double res = 0.0;
 	Point3 v1 = tempC[p1];
 	Point3 v2 = tempC[p2];
@@ -199,7 +199,7 @@ double MingCurve::getAngle(int p1, int p2, int p3){
 	res = res > 1.0 ? 1.0 : res;
 	return acos(res);
 }
-double MingCurve::getPt2LineDist(int p1, int p2, int p3){
+CS_INLINE double MingCurve::getPt2LineDist(int p1, int p2, int p3){
 	double res = 0.0;
 	Point3 v1 = tempC[p1];
 	Point3 v2 = tempC[p2];
@@ -213,7 +213,7 @@ double MingCurve::getPt2LineDist(int p1, int p2, int p3){
 }
 
 //=====================================Get Measures==================================//
-void MingCurve::splitEdge(int p1, int p2ind, const Point3 & newP){
+CS_INLINE void MingCurve::splitEdge(int p1, int p2ind, const Point3 & newP){
 	//add new point
 	int p2 = tempAdj[p1][p2ind];
 	tempC.push_back(newP); org_n++;
@@ -233,7 +233,7 @@ void MingCurve::splitEdge(int p1, int p2ind, const Point3 & newP){
 	tempAdj[p2][pos] = org_n-1;
 }
 
-void MingCurve::splitEdge(int p1, int p2ind, const Point3 &newP, const Point3 &newOrgP){
+CS_INLINE void MingCurve::splitEdge(int p1, int p2ind, const Point3 &newP, const Point3 &newOrgP){
 	//add new point
 	int p2 = tempAdj[p1][p2ind];
 	tempC.push_back(newP); org_n++;
@@ -254,7 +254,7 @@ void MingCurve::splitEdge(int p1, int p2ind, const Point3 &newP, const Point3 &n
 	tempAdj[p2][pos] = org_n-1;
 }
 //Protect acute corners
-void MingCurve::protectCorner(){
+CS_INLINE void MingCurve::protectCorner(){
 	radius.clear();
 	cliped.clear();
 	vector<int> acuteList;
@@ -350,7 +350,7 @@ void MingCurve::protectCorner(){
 		}
 	}
 }
-bool MingCurve::passTetGen(){
+CS_INLINE bool MingCurve::passTetGen(){
 	tetgenio tetIn;
 	tetgenio tetOut;
 	tetIn.numberofpoints = org_n;
@@ -381,7 +381,7 @@ bool MingCurve::passTetGen(){
 	return true;
 }
 //Check whether the curve is alread edge-protected
-bool MingCurve::isProtected(){
+CS_INLINE bool MingCurve::isProtected(){
 	badEdge.clear();
 	char ** used = new char*[org_n];
 	for(int i=0; i<org_n; i++){
@@ -472,7 +472,7 @@ bool MingCurve::isProtected(){
 	return true;
 }
 //Insert mid points on edges that are not edge-protected
-void MingCurve::insertMidPointsTetgen(){
+CS_INLINE void MingCurve::insertMidPointsTetgen(){
 	int besize, p, q, j; Point3 p1, p2, newP, orgp1,orgp2, newOrgP;
 	while(!isProtected()){
 		if (badInput) break;
@@ -497,7 +497,7 @@ void MingCurve::insertMidPointsTetgen(){
 }
 //For getCurveAfterEP(), to check whether the orientation changes
 //if so, normals should be fliped
-bool MingCurve::sameOrientation(const vector<int> & newCurve){
+CS_INLINE bool MingCurve::sameOrientation(const vector<int> & newCurve){
 	int ncsize = newCurve.size();
 	int pos1 = -1,pos2 = -1,pos=0;
 	while(pos1==-1||pos2==-1){
@@ -508,7 +508,7 @@ bool MingCurve::sameOrientation(const vector<int> & newCurve){
 	return pos2>pos1;
 }
 //Recover ordered curve points
-bool MingCurve::getCurveAfterEP(){
+CS_INLINE bool MingCurve::getCurveAfterEP(){
 	int start = 0, cur, pre, next;
 	vector<int> newCurve;
 	newCurve.push_back(0);
@@ -597,7 +597,7 @@ CS_INLINE bool MingCurve::isDeGenCase(){
 // ================= 2D Planar Curve Handling =================//
 
 // Compute how planar the curve is (0 = not planar, 1 = perfectly planar)
-double MingCurve::computePlanarity() {
+CS_INLINE double MingCurve::computePlanarity() {
 	if (org_n < 4) return 1.0;  // Too few points, treat as planar
 	
 	// Convert points to Eigen matrix
@@ -637,7 +637,7 @@ double MingCurve::computePlanarity() {
 }
 
 // Project curve to 2D coordinate system
-void MingCurve::projectTo2D(Eigen::MatrixXd& V2D, Eigen::Vector3d& origin, Eigen::Matrix3d& basis) {
+CS_INLINE void MingCurve::projectTo2D(Eigen::MatrixXd& V2D, Eigen::Vector3d& origin, Eigen::Matrix3d& basis) {
 	// Convert to Eigen
 	Eigen::MatrixXd V(org_n, 3);
 	for (int i = 0; i < org_n; i++) {
@@ -696,7 +696,7 @@ CS_INLINE void MingCurve::projectFrom2D(const Eigen::MatrixXd& V2D, const Eigen:
 // Check if edges are protected in 2D (without TetGen)
 // Note: the 'E' parameter was removed — it was accepted but never used.
 // The function builds its own E_constraint internally from org_n.
-bool MingCurve::isProtected2D(Eigen::MatrixXd& V2D) {
+CS_INLINE bool MingCurve::isProtected2D(Eigen::MatrixXd& V2D) {
 	badEdge.clear();
 	
 	// Build edge constraint matrix (closed loop)
@@ -749,7 +749,7 @@ bool MingCurve::isProtected2D(Eigen::MatrixXd& V2D) {
 }
 
 // Edge protection using 2D projection
-bool MingCurve::edgeProtectPlanar2D() {
+CS_INLINE bool MingCurve::edgeProtectPlanar2D() {
 	Geex::cs_log() << "MWT: Using 2D planar edge protection" << endl;
 	
 	// Project to 2D
@@ -790,7 +790,7 @@ CS_INLINE void MingCurve::perturbPts(double ptb){
 //main procedure
 //If the curve is not edge-protected, protect it by 2 steps:
 //1.protectCorner; 2. insert mid points.
-bool MingCurve::edgeProtect(bool isdmwt){
+CS_INLINE bool MingCurve::edgeProtect(bool isdmwt){
 	// Check if curve is planar
 	double planarity = computePlanarity();
 	

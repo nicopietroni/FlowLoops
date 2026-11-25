@@ -15,14 +15,14 @@ CS_INLINE EdgeInfo::EdgeInfo()
 {
 }
 
-EdgeInfo::~EdgeInfo() {
+CS_INLINE EdgeInfo::~EdgeInfo() {
 	delete[] leftTris;
 	delete[] leftEdgeInd;
 	delete[] rightTris;
 	delete[] rightEdgeInd;
 }
 
-int EdgeInfo::getSize() {
+CS_INLINE int EdgeInfo::getSize() {
 	int totalSize = 0;
 	if (leftsize  > 0) totalSize += leftsize  * (sizeof(int) + sizeof(char));
 	if (rightsize > 0) totalSize += rightsize * (sizeof(int) + sizeof(char));

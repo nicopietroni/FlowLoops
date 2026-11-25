@@ -5,7 +5,7 @@
 #include "TriangleInfo.h"
 
 
-TriangleInfo::TriangleInfo() {
+CS_INLINE TriangleInfo::TriangleInfo() {
 	// Mark all sub-problem costs as uncomputed.
 	// Previously used FLT_MIN (a tiny positive float) as sentinel, which was
 	// ambiguous when compared against real costs. UNCOMPUTED_COST is negative
@@ -17,11 +17,11 @@ TriangleInfo::TriangleInfo() {
 CS_INLINE TriangleInfo::~TriangleInfo() {
 }
 
-int TriangleInfo::getOptSize() {
+CS_INLINE int TriangleInfo::getOptSize() {
 	return sizeof(optCost) + sizeof(optTile);
 }
 
-int TriangleInfo::getSize() {
+CS_INLINE int TriangleInfo::getSize() {
 	return sizeof(optCost) + sizeof(optTile)
 		 + sizeof(edgeIndex) + sizeof(triIndex);
 }

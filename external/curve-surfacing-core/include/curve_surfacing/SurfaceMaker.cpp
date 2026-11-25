@@ -7,11 +7,11 @@
 #include "cs_logging.h"
 
 
-SurfaceMaker::SurfaceMaker() {
+CS_INLINE SurfaceMaker::SurfaceMaker() {
     m_cycleUtils = new cycleUtils();
 }
 
-SurfaceMaker::~SurfaceMaker() {
+CS_INLINE SurfaceMaker::~SurfaceMaker() {
     delete m_cycleUtils;
 }
 

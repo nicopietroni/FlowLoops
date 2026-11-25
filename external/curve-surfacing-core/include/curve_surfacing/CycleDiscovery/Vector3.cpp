@@ -21,81 +21,81 @@ CS_INLINE Vector3::Vector3(double _x, double _y, double _z) : x(_x), y(_y), z(_z
 {
 }
 
-Vector3& Vector3::operator=(const Vector3& a)
+CS_INLINE Vector3& Vector3::operator=(const Vector3& a)
 {
     x = a[0]; y = a[1]; z = a[2];
     return *this;
 }
 
-const double& Vector3::operator[](int n) const
+CS_INLINE const double& Vector3::operator[](int n) const
 {
 	return (&x)[n];
 }
 
-double& Vector3::operator[](int n)
+CS_INLINE double& Vector3::operator[](int n)
 {
 	return (&x)[n];
 }
 
-Vector3& Vector3::operator+=(const Vector3& a)
+CS_INLINE Vector3& Vector3::operator+=(const Vector3& a)
 {
     x += a[0]; y += a[1]; z += a[2];
     return *this;
 }
 
-Vector3& Vector3::operator-=(const Vector3& a)
+CS_INLINE Vector3& Vector3::operator-=(const Vector3& a)
 {
     x -= a[0]; y -= a[1]; z -= a[2];
     return *this;
 }
 
-Vector3& Vector3::operator*=(double s)
+CS_INLINE Vector3& Vector3::operator*=(double s)
 {
     x *= s; y *= s; z *= s;
     return *this;
 }
 
-Vector3 Vector3::operator-() const
+CS_INLINE Vector3 Vector3::operator-() const
 {
     return Vector3(-x, -y, -z);
 }
 
-Vector3 Vector3::operator+() const
+CS_INLINE Vector3 Vector3::operator+() const
 {
     return *this;
 }
 
-Vector3 Vector3::operator+( const Vector3 &v ) const
+CS_INLINE Vector3 Vector3::operator+( const Vector3 &v ) const
 {
     return Vector3( x + v.x, y + v.y, z + v.z );
 }
 
-Vector3 Vector3::operator-( const Vector3 &v ) const
+CS_INLINE Vector3 Vector3::operator-( const Vector3 &v ) const
 {
     return Vector3( x - v.x, y - v.y, z - v.z );
 }
 
 // Fixed: original asserted s > 0.0, incorrectly rejecting negative divisors.
 // Division by zero is the only invalid case.
-Vector3 Vector3::operator/( const double s ) const
+CS_INLINE Vector3 Vector3::operator/( const double s ) const
 {
     assert( std::abs(s) > IZ_EPSILON );
     return Vector3( x / s, y / s, z / s );
 }
 
-Vector3 Vector3::operator*( const double s ) const
+CS_INLINE Vector3 Vector3::operator*( const double s ) const
 {
     return Vector3( x * s, y * s, z * s );
 }
 
 // Dot Product
-double Vector3::operator*( const Vector3 &v ) const
+CS_INLINE double Vector3::operator*( const Vector3 &v ) const
 {
     return x * v.x + y * v.y + z * v.z;
 }
 
 // Cross Product
-Vector3 Vector3::operator^( const Vector3 &v ) const
+CS_INLINE Vector3 Vector3::operator^( const Vector3 &v ) const
 {
     return Vector3( y * v.z - z * v.y,
                     z * v.x - x * v.z,
@@ -118,12 +118,12 @@ CS_INLINE void Vector3::normalize()
     x *= s; y *= s; z *= s;
 }
 
-bool Vector3::operator==( const Vector3 &v ) const
+CS_INLINE bool Vector3::operator==( const Vector3 &v ) const
 {
     return x == v.x && y == v.y && z == v.z;
 }
 
-bool Vector3::operator!=( const Vector3 &v ) const
+CS_INLINE bool Vector3::operator!=( const Vector3 &v ) const
 {
     return x != v.x || y != v.y || z != v.z;
 }

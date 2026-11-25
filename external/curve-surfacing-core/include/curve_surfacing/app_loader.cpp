@@ -17,7 +17,7 @@ namespace Geex {
 	// Helper function to check curve point ordering
 	// Prints a warning if curve appears to be in reversed order
 	// Returns true if curve appears reversed, false if it appears correct
-	bool ensure_correct_curve_ordering(std::vector<Eigen::Vector3d>& points, int curve_index) {
+	CS_INLINE bool ensure_correct_curve_ordering(std::vector<Eigen::Vector3d>& points, int curve_index) {
 		if (points.size() < 3) {
 			return false; // Not enough points to check ordering
 		}
@@ -48,7 +48,7 @@ namespace Geex {
 		return false; // Curve appears in correct order
 	}
 
-    Geex::MeshData loadMeshDataFromOBJ(const std::string& filename) {
+    CS_INLINE Geex::MeshData loadMeshDataFromOBJ(const std::string& filename) {
     Geex::MeshData mesh_data;
     mesh_data.num_vertices = 0;
     mesh_data.num_faces = 0;
@@ -113,7 +113,7 @@ namespace Geex {
 
 
 	// New modular loading functions
-	std::vector<Geex::CurveData> load_curves_from_file(const std::string& filename) {
+	CS_INLINE std::vector<Geex::CurveData> load_curves_from_file(const std::string& filename) {
 		std::vector<Geex::CurveData> curves_data;
 		std::ifstream curv_file(filename);
 		
@@ -156,7 +156,7 @@ namespace Geex {
 		return curves_data;
 	}
 	
-	std::vector<Geex::CycleData> load_cycles_from_file(const std::string& filename) {
+	CS_INLINE std::vector<Geex::CycleData> load_cycles_from_file(const std::string& filename) {
 		std::vector<Geex::CycleData> cycles_data;
 		
         std::string cycle_filename = filename + ".cycle";
@@ -190,7 +190,7 @@ namespace Geex {
 		return cycles_data;
 	}
 	
-	std::vector<Geex::MeshData> load_patch_meshes_from_files(const std::string& base_filename, int num_patches) {
+	CS_INLINE std::vector<Geex::MeshData> load_patch_meshes_from_files(const std::string& base_filename, int num_patches) {
 		std::vector<Geex::MeshData> patches_data;
 		patches_data.reserve(num_patches);
 		
@@ -244,7 +244,7 @@ namespace Geex {
 		return patches_data;
 	}
 
-FeatureEdgeData load_feature_edges_from_file(const std::string& filename) {
+CS_INLINE FeatureEdgeData load_feature_edges_from_file(const std::string& filename) {
     FeatureEdgeData data;
     std::ifstream file(filename);
     
@@ -281,7 +281,7 @@ FeatureEdgeData load_feature_edges_from_file(const std::string& filename) {
     return data;
 }
 
-NormalCurveData load_normal_curves_from_file(const std::string& filename) {
+CS_INLINE NormalCurveData load_normal_curves_from_file(const std::string& filename) {
     NormalCurveData data;
     std::ifstream file(filename);
     
@@ -313,6 +313,10 @@ NormalCurveData load_normal_curves_from_file(const std::string& filename) {
         
         if (cycle.num_edges < 0) {
             cs_err() << "Error: Invalid number of edges in cycle " << cycle_idx << ": " << cycle.num_edges << std::endl;
+            //continue;
+            // keep an empty entry: cycles[i] must stay aligned with cycle i
+            cycle.num_edges = 0;
+            data.cycles.push_back(cycle);
             continue;
         }
         
@@ -337,6 +341,14 @@ NormalCurveData load_normal_curves_from_file(const std::string& filename) {
     }
     
     file.close();
+
+    // A truncated/corrupted file stops early: report it and keep num_cycles
+    // consistent with what was actually read
+    if ((int)data.cycles.size() != data.num_cycles) {
+        cs_err() << "Error: normal curve file " << filename << " declares " << data.num_cycles
+                 << " cycles but only " << data.cycles.size() << " could be read" << std::endl;
+        data.num_cycles = (int)data.cycles.size();
+    }
     
     // Report statistics
     int total_edges = 0;

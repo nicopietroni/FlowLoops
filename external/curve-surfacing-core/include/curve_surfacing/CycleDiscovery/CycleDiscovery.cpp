@@ -372,7 +372,7 @@ CS_INLINE AML::double3 cycleDiscovery::computeNormalPlanebetweenTwoCurves(const 
 	return v[0].cross(v[1]);
 }
 
-bool mySort1(std::pair<double, std::pair<int, int> > i, std::pair<double, std::pair<int, int> > j)
+CS_INLINE bool mySort1(std::pair<double, std::pair<int, int> > i, std::pair<double, std::pair<int, int> > j)
 {
 	return (i.first<j.first);
 }
@@ -1171,7 +1171,7 @@ CS_INLINE void cycleDiscovery::constructJointRotationGraphbyPoleGraph()
 	// printf("constructJointRotationGraphbyPoleGraph: Completed construction for all nodes.\n");
 }
 
-std::vector<std::vector<int> > ordering(const std::vector<std::vector<double> > &data)
+CS_INLINE std::vector<std::vector<int> > ordering(const std::vector<std::vector<double> > &data)
 {
 	std::vector<std::vector<int> > rank(data.size(), std::vector<int>(data.size(), 0));
 	for (int i = 0; i<data.size(); i++){
@@ -1191,7 +1191,7 @@ std::vector<std::vector<int> > ordering(const std::vector<std::vector<double> > 
 	}
 	return rank;
 }
-std::vector<int> ordering(const std::vector<int> &data)
+CS_INLINE std::vector<int> ordering(const std::vector<int> &data)
 {
 	std::vector<int> rank(data.size());
 	std::vector<int> tdat = data;
@@ -1206,7 +1206,7 @@ std::vector<int> ordering(const std::vector<int> &data)
 	}
 	return rank;
 }
-double getDihedralCostIndexed(const std::vector<int> &ns, int &twistNormNum)
+CS_INLINE double getDihedralCostIndexed(const std::vector<int> &ns, int &twistNormNum)
 {
 	std::vector<int> ind = ns;
 	sort(ind.begin(), ind.end());
@@ -1491,7 +1491,7 @@ CS_INLINE void cycleDiscovery::constructExpandSequence()
 	}
 	// printf("constructExpandSequence: Completed construction for all poles.\n");
 }
-void getBases(const std::vector<long long> &org, std::vector<long long> &tar)
+CS_INLINE void getBases(const std::vector<long long> &org, std::vector<long long> &tar)
 {
 	if (org.empty())
 		return;
@@ -1501,7 +1501,7 @@ void getBases(const std::vector<long long> &org, std::vector<long long> &tar)
 	for (int i = tar.size() - 2; i >= 0; i--)
 		tar[i] *= tar[i + 1];
 }
-long long indicesToIndex(const std::vector<long long> &org, const std::vector<long long> &org2)
+CS_INLINE long long indicesToIndex(const std::vector<long long> &org, const std::vector<long long> &org2)
 {
 	if (org.empty())
 		return 0;
@@ -1511,7 +1511,7 @@ long long indicesToIndex(const std::vector<long long> &org, const std::vector<lo
 	}
 	return index;
 }
-void indexToIndices(const long long &org, const std::vector<long long> &org2, std::vector<long long> &tar)
+CS_INLINE void indexToIndices(const long long &org, const std::vector<long long> &org2, std::vector<long long> &tar)
 {
 	if (org2.empty())
 		return;
@@ -1523,7 +1523,7 @@ void indexToIndices(const long long &org, const std::vector<long long> &org2, st
 		temp = temp2;
 	}
 }
-std::vector<int> getMinValuesPos(const std::vector<double> &data, const int &n)
+CS_INLINE std::vector<int> getMinValuesPos(const std::vector<double> &data, const int &n)
 {
 	int len = data.size();
 	std::vector<int> ind;
@@ -1855,7 +1855,7 @@ CS_INLINE void cycleDiscovery::searchMinPoleGraph()
 	}
 	m_selectedNodeInPole = res;
 }
-bool mySort3(std::pair<int, int> i, std::pair<int, int> j)
+CS_INLINE bool mySort3(std::pair<int, int> i, std::pair<int, int> j)
 {
 	return (i.second<j.second);
 }

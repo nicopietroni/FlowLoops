@@ -21,7 +21,7 @@ static void applyPlanarTriangulation(MingCurve* myCurve, DMWT* myDMWT) {
 }
 
 // interface 1
-int delaunayRestrictedTriangulation(
+CS_INLINE int delaunayRestrictedTriangulation(
 	const double* inCurve, const int inNum,
 	std::vector<double>& outPoints,
 	std::vector<double>& outFaces,
@@ -80,7 +80,7 @@ int delaunayRestrictedTriangulation(
 }
 
 // interface 2
-int delaunayRestrictedTriangulation(
+CS_INLINE int delaunayRestrictedTriangulation(
 	const double* inCurve, const float* inNorm, const int inNum,
 	std::vector<double>& outPoints, std::vector<float>& outNorms,
 	std::vector<double>& outFaces,
@@ -139,7 +139,7 @@ int delaunayRestrictedTriangulation(
 }
 
 // interface 3
-int delaunayRestrictedTriangulation(
+CS_INLINE int delaunayRestrictedTriangulation(
 	const double* inCurve, const float* inNorm, const int inNum,
 	std::vector<double>& outPoints, std::vector<float>& outNorms,
 	std::vector<int>& outFaces,

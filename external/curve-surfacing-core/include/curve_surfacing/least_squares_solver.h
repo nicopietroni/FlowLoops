@@ -93,6 +93,14 @@ template <class ScalarType> class LinearConstraintLeastSQSolver {
 
 public:
 
+  // iterations / relative error of the last LSCG solve (0 for Cholesky)
+  int last_iterations() const {
+    return (solver_type == LeastSquaresSolverType::LSCG) ? (int)lscg_solver.iterations() : 0;
+  }
+  double last_error() const {
+    return (solver_type == LeastSquaresSolverType::LSCG) ? (double)lscg_solver.error() : 0.0;
+  }
+
   // Constructor - default to LSCG for robustness
   LinearConstraintLeastSQSolver(LeastSquaresSolverType type = LeastSquaresSolverType::LSCG) 
     : cholesky_solver(nullptr), solver_type(type) {
@@ -198,6 +206,8 @@ public:
       } else {
         V = lscg_solver.solve(V0);
       }
+      cs_log() << " LSCG: " << lscg_solver.iterations() << " iterations, error "
+               << lscg_solver.error() << " (" << A0.rows() << "x" << A0.cols() << ")" << std::endl;
 
       if(lscg_solver.info() != Eigen::Success)
       {

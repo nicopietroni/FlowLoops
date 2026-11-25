@@ -686,11 +686,14 @@ namespace Geex
 		void init_vef_list();
 
 
+	public:
+		// Delete every vertex, edge and face and drop the lists; the next
+		// insert recreates them. What remesh_patch uses to rebuild in place.
+		void clear_data();
+
 	private:
 
 		HE_edge* insert_edge(HE_vert* vstart, HE_vert* vend); 
-
-		void clear_data();
 
 		void clear_vertices();
 		void clear_edges();
