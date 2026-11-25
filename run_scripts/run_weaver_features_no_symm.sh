@@ -9,12 +9,14 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <folder>"
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <folder> [extra loop_weaver options, e.g. -no_dynamic -thinplate]"
     exit 1
 fi
 
 FOLDER="$1"
+shift
+EXTRA_OPTS=("$@")
 
 if [ ! -d "$FOLDER" ]; then
     echo "Error: '$FOLDER' is not a directory"
@@ -31,19 +33,24 @@ if [ ! -x "$WEAVER" ]; then
     exit 1
 fi
 
-# Resolve the input folder to an absolute path, then work from build
-# so all outputs are created there
+# Resolve the input folder to an absolute path, then work from build:
+# loop_weaver writes its outputs to the current directory
 FOLDER="$(cd "$FOLDER" && pwd)"
 cd "$BUILD_DIR"
 
-TIMEOUT=1200
+TIMEOUT=1800
 TIMEOUT_LOG="timeouts.txt"
 CALL_DIR="$(pwd)"
 DONE_DIR="$CALL_DIR/done"
 
+# Options of this batch. The other parameters come from
+# loopweaver_settings.txt next to loop_weaver (or its compiled defaults);
+# extra options given after the folder are appended and win.
+OPTS=(-no_symm -angle 45 -error_setup 1 -subsampl 2)
+
 mkdir -p "$DONE_DIR"
 
-echo "=== Run started at $(date) ===" >> "$TIMEOUT_LOG"
+echo "=== Run started at $(date): ${OPTS[*]} ${EXTRA_OPTS[*]} ===" >> "$TIMEOUT_LOG"
 
 shopt -s nullglob
 for file in "$FOLDER"/*.obj; do
@@ -51,7 +58,7 @@ for file in "$FOLDER"/*.obj; do
 
     start_time=$(date +%s)
     gtimeout --kill-after=10s "$TIMEOUT" \
-        "$WEAVER" "$file" -error_setup 1 -batch -angle 45
+        "$WEAVER" "$file" -batch "${OPTS[@]}" "${EXTRA_OPTS[@]}"
 
     status=$?
     end_time=$(date +%s)
@@ -78,7 +85,7 @@ for file in "$FOLDER"/*.obj; do
         moved=$((moved + 1))
     done
 
-    echo "✅ Success: $file (${elapsed}s) → moved $((moved)) output files to $DONE_DIR"
+    echo "✅ Success: $file (${elapsed}s) → moved ${moved} output files to $DONE_DIR"
     echo "$(date '+%Y-%m-%d %H:%M:%S')  SUCCESS  $file  (${elapsed}s)" >> "$TIMEOUT_LOG"
 done
 

@@ -11,14 +11,17 @@ trap cleanup INT TERM
 
 # ─────────────────────────────────────────────
 # CONFIGURATION
-#   Optional argument: dataset base folder containing the four variant
-#   subfolders. Defaults to the full Flowloops dataset.
+#   Optional arguments: dataset base folder containing the four variant
+#   subfolders (defaults to the full Flowloops dataset), then extra
+#   loop_weaver options passed to every run (e.g. -no_dynamic -thinplate).
 # ─────────────────────────────────────────────
 DATASET_BASE="${1:-/Users/edwardsu/Projects/phd/Flowloops_dataset}"
+shift
+EXTRA_OPTS=("$@")
 
 if [ ! -d "$DATASET_BASE" ]; then
     echo "Error: dataset base folder not found: '$DATASET_BASE'"
-    echo "Usage: $0 [dataset_base_folder]"
+    echo "Usage: $0 [dataset_base_folder] [extra loop_weaver options]"
     exit 1
 fi
 DATASET_BASE="$(cd "$DATASET_BASE" && pwd)"
@@ -44,7 +47,7 @@ fi
 # Work from build so all outputs are created there
 cd "$BUILD_DIR"
 
-TIMEOUT=1200
+TIMEOUT=1800
 CALL_DIR="$(pwd)"
 OUTPUT_DIR="$CALL_DIR/output"
 
@@ -75,15 +78,16 @@ run_variant() {
     echo "  Output dir : $DONE_DIR"
     echo "  Started    : $(date)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "=== es=${error_setup} run started at $(date) ===" >> "$TIMEOUT_LOG"
+    echo "=== es=${error_setup} run started at $(date): ${EXTRA_OPTS[*]} ===" >> "$TIMEOUT_LOG"
 
     shopt -s nullglob
     for file in "$folder"/*.obj; do
         echo "  Processing: $file"
 
-        # Build the command arguments
-        local extra_args=""
-        [ "$use_symm" = "1" ] && extra_args="-symm"
+        # Symmetry is always given explicitly: loopweaver_settings.txt
+        # could otherwise switch it on for the no_symm variants
+        local symm_arg="-no_symm"
+        [ "$use_symm" = "1" ] && symm_arg="-symm"
 
         local start_time end_time elapsed status
         start_time=$(date +%s)
@@ -93,7 +97,9 @@ run_variant() {
             -error_setup "$error_setup" \
             -batch \
             -angle "$angle" \
-            $extra_args
+            "$symm_arg" \
+            -subsampl 2 \
+            "${EXTRA_OPTS[@]}"
 
         status=$?
         end_time=$(date +%s)
@@ -154,4 +160,4 @@ for es in "${ERROR_SETUP_VALUES[@]}"; do
 done
 
 echo ""
-echo "🏁 All variants and ccability values complete — $(date)"
+echo "🏁 All variants and error_setup values complete — $(date)"
