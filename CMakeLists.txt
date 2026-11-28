@@ -46,13 +46,32 @@ if(ENABLE_SANITIZER)
 endif()
 
 # ==============================
+# TracingFieldLib (not vendored — download it separately)
+#
+# Expected next to this repository as ../TracingFieldLib, or pass
+# -DTRACINGFIELDLIB_DIR=<path>. See the Build section of README.md.
+# ==============================
+set(TRACINGFIELDLIB_DIR "${CMAKE_SOURCE_DIR}/../TracingFieldLib"
+    CACHE PATH "Path to a TracingFieldLib checkout")
+get_filename_component(TRACINGFIELDLIB_DIR "${TRACINGFIELDLIB_DIR}" ABSOLUTE)
+set(TRACEFIELD_DIR "${TRACINGFIELDLIB_DIR}/include")
+if(NOT EXISTS "${TRACEFIELD_DIR}/Lut.txt")
+  message(FATAL_ERROR
+    "TracingFieldLib not found at ${TRACINGFIELDLIB_DIR}\n"
+    "Download it from https://github.com/nicopietroni/TracingFieldLib and place "
+    "it next to this repository (../TracingFieldLib), or pass "
+    "-DTRACINGFIELDLIB_DIR=<path>.")
+endif()
+message(STATUS "TracingFieldLib: ${TRACINGFIELDLIB_DIR}")
+
+# ==============================
 # Vendored dependencies
 #
-# Everything lives under external/ — no submodules, no network access during
-# the build. See external/README.md for upstream sources and pinned commits.
+# Everything else lives under external/ — no submodules, no network access
+# during the build. See external/README.md for upstream sources and pinned
+# commits.
 # ==============================
 set(EXTERNAL_DIR "${CMAKE_SOURCE_DIR}/external")
-set(TRACEFIELD_DIR "${EXTERNAL_DIR}/tracingfieldlib/include")
 set(EIGENPATH      "${EXTERNAL_DIR}/eigen-3.4.0")
 set(IGLLIB         "${EXTERNAL_DIR}/libigl/include")
 set(IMGUI_DIR      "${EXTERNAL_DIR}/imgui")
@@ -61,7 +80,6 @@ set(CURVE_SURFACING_CORE_DIR "${EXTERNAL_DIR}/curve-surfacing-core")
 set(TETGEN_DIR "${CURVE_SURFACING_CORE_DIR}/include/curve_surfacing/CycleDiscovery/tetgen")
 
 foreach(_dep
-    "${TRACEFIELD_DIR}"
     "${EIGENPATH}/Eigen"
     "${IGLLIB}"
     "${IMGUI_DIR}"

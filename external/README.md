@@ -1,15 +1,17 @@
 # Vendored dependencies
 
-Everything LoopWeaver needs to build, other than CMake, a C++20 compiler, and
-the three system packages (OpenGL, GLEW, GLFW), is copied into this directory.
-There are no git submodules and the build makes no network calls.
+Everything LoopWeaver needs to build, other than CMake, a C++20 compiler, the
+three system packages (OpenGL, GLEW, GLFW) and
+[TracingFieldLib](https://github.com/nicopietroni/TracingFieldLib), is copied
+into this directory. TracingFieldLib is downloaded separately from its library
+page; see the Build section of the main [README](../README.md). There are no
+git submodules and the build makes no network calls.
 
 Each tree is a **pruned** copy — only the parts the build actually compiles or
 includes were taken. Upstream licenses are kept alongside the code they cover.
 
 | Directory | Upstream | Pinned at | License |
 |---|---|---|---|
-| `tracingfieldlib/` | [nicopietroni/TracingFieldLib](https://github.com/nicopietroni/TracingFieldLib) | `680d61a` | Non-Commercial (see `tracingfieldlib/LICENSE`) |
 | `curve-surfacing-core/` | [Edisuism/CurveSurfacingLib-V2](https://github.com/Edisuism/CurveSurfacingLib-V2), `Curve-Surfacing-Core/` | `7604729` | Research / non-commercial — see upstream [`NOTICE.md`](https://github.com/Edisuism/CurveSurfacingLib-V2/blob/master/NOTICE.md) |
 | `curve-surfacing-core/external/Directional/` | [avaxman/Directional](https://github.com/avaxman/Directional) | vendored via Curve-Surfacing-Core | MPL-2.0 |
 | `eigen-3.4.0/` | [Eigen 3.4.0](https://eigen.tuxfamily.org) | 3.4.0 | MPL-2.0 |
@@ -22,10 +24,6 @@ includes were taken. Upstream licenses are kept alongside the code they cover.
 
 ## What was pruned
 
-- **TracingFieldLib** — only `include/` and `LICENSE` kept; `apps/` and
-  `external_lib/` dropped. Its bundled Eigen and libigl are vendored separately
-  above. It no longer bundles a TetGen header; the one inside
-  Curve-Surfacing-Core is used instead.
 - **Curve-Surfacing-Core** — `build/` and an unrelated 78 MB archive dropped.
   Note LoopWeaver does *not* link `libcurvesurfacing-core.a`; the library is
   consumed header-only, and only TetGen and Triangle are compiled as static
@@ -34,9 +32,6 @@ includes were taken. Upstream licenses are kept alongside the code they cover.
 - **libigl** — `tests/`, `tutorial/`, `docs/`, `cmake/` dropped; headers only.
   Nothing links an `igl::` target, so libigl is purely header-only here.
 - **Dear ImGui** — only the core sources and the GLFW + OpenGL2 backends.
-
-`tracingfieldlib/include/Lut.txt` is 31 MB of the 64 MB total. It is a runtime
-lookup table baked into the binary as an absolute path via `-DLUT_PATH=`.
 
 ## Updating a vendored tree
 

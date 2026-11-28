@@ -48,16 +48,18 @@ curl -LO https://github.com/nicopietroni/LoopWeaver/releases/latest/download/flo
 
 ### Build
 
-All third-party dependencies are vendored under `external/` — there are no git
-submodules, and the build makes no network requests. See
-[`external/README.md`](external/README.md) for upstream sources, pinned
-versions and licenses.
-
 **Requirements**
 
 - CMake ≥ 3.16
 - A C++20 compiler
 - OpenGL, GLEW, GLFW 3
+- [TracingFieldLib](https://github.com/nicopietroni/TracingFieldLib) (header
+  only), downloaded separately from its library page — see below
+
+All the other third-party dependencies (Eigen, libigl, Dear ImGui, Triangle,
+Curve-Surfacing-Core) are vendored under `external/`. See
+[`external/README.md`](external/README.md) for their upstream sources, pinned
+versions and licenses.
 
 Verified on macOS 26 (Apple Silicon) with Apple clang 21 and CMake 4.3:
 
@@ -72,9 +74,31 @@ not been tested. The dependencies there would be:
 sudo apt install cmake build-essential libglew-dev libglfw3-dev libglu1-mesa-dev
 ```
 
+**TracingFieldLib**
+
+TracingFieldLib is not included in this repository. Download it from
+[github.com/nicopietroni/TracingFieldLib](https://github.com/nicopietroni/TracingFieldLib)
+and place it next to LoopWeaver:
+
+```
+<parent folder>/
+├── TracingFieldLib/       <- downloaded from the library page
+│   └── include/
+└── LoopWeaver/            <- this repository
+    ├── external/
+    └── loopweaver/
+```
+
+CMake looks for `../TracingFieldLib` by default; if it is somewhere else, pass
+`-DTRACINGFIELDLIB_DIR=<path>` when configuring. Only its `include/` folder is
+used (its bundled `external_lib/` is not needed). The lookup table
+`include/Lut.txt` is read at run time from its absolute path, so do not move
+TracingFieldLib after building.
+
 **Build**
 
 ```bash
+git clone https://github.com/nicopietroni/TracingFieldLib.git
 git clone https://github.com/nicopietroni/LoopWeaver.git
 cd LoopWeaver
 cmake -S . -B build
