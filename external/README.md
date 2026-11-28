@@ -21,20 +21,3 @@ includes were taken. Upstream licenses are kept alongside the code they cover.
 
 `curve-surfacing-core/include/curve_surfacing/CycleDiscovery/tetgen/` is TetGen
 1.4.x (Hang Si, WIAS), non-commercial per its source headers.
-
-## What was pruned
-
-- **Curve-Surfacing-Core** — `build/` and an unrelated 78 MB archive dropped.
-  Note LoopWeaver does *not* link `libcurvesurfacing-core.a`; the library is
-  consumed header-only, and only TetGen and Triangle are compiled as static
-  targets (see the root `CMakeLists.txt`).
-- **Eigen** — `doc/`, `test/`, `bench/`, `blas/`, `lapack/` dropped; headers only.
-- **libigl** — `tests/`, `tutorial/`, `docs/`, `cmake/` dropped; headers only.
-  Nothing links an `igl::` target, so libigl is purely header-only here.
-- **Dear ImGui** — only the core sources and the GLFW + OpenGL2 backends.
-
-## Updating a vendored tree
-
-Re-copy from upstream at a known commit, keep the license file, re-prune as
-above, and update the table. Local edits to these trees will be silently lost
-on the next refresh — fix things upstream instead.
